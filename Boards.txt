@@ -1,0 +1,4742 @@
+
+
+#include <Arduino.h>
+#include <analogWrite.h>
+//#include <SoftwareSerial.h>
+#include <EEPROM.h>
+#include "OneWire.h"
+#include "DallasTemperature.h"
+#define ONE_WIRE_BUS_1 34  //------set pin for Temp Sensor
+OneWire ourWire1(ONE_WIRE_BUS_1);
+DallasTemperature sensor1(&ourWire1);     //   Temp Setup
+
+#include <WiFi.h>
+#include <painlessMesh.h>
+#include "IPAddress.h"
+#include <RBD_Timer.h>
+#include <SPIFFS.h>
+#include <esp_now.h>
+#include <mbedtls/sha256.h>
+#include <stdio.h>
+#include <string.h>
+
+#define MAX_MAC_LENGTH 6
+bool hybrid_interface = false;
+uint16_t buffer3Data;
+byte password_mac_gen[2],password_master_gen[2]={0xAA, 0xAA};
+
+uint8_t packet[7], recieved_packet[7];  // Packet buffer
+uint32_t data = 0x12345678;
+#define CRC32_POLYNOMIAL 0xEDB88320
+uint16_t data_packet;
+int packet_size = 7;
+uint8_t received_password[2];
+uint8_t received_crc;
+
+
+
+#define   MESH_PREFIX     meshssid
+#define   MESH_PASSWORD   meshpassword
+#define   MESH_PORT       meshport
+
+Scheduler userScheduler; // to control your personal task
+painlessMesh  mesh;
+
+int temp_i = 0;
+//------------------------------------hc-12 setup---------------------------------------------------------------------------
+int setHC = 12; // used for setting for HC-12   //12
+#define RXD2 14 //16  //14  //connect inverse TX of rf into RXD
+#define TXD2 27 //17  //27  ////connect inverse RX of rf into TXD
+//SoftwareSerial hc12(14, 27); // RX, TX
+//int setHC = 12; // used for setting for HC-12
+int transAddress = 3;
+bool Hc12 = false;
+
+//----- -------------------------------grade control------------------------------------- ---//
+bool grade_control = false, channel_control = false;
+int grade_c_firstwrite = 0;
+int gradval[16];
+int total_grades = 4;
+bool gillbarco_setup = false;
+//---------------------------------------------------------set address
+int dipadd[] = {32, 33};
+//Get the switches state for address
+byte address() {
+  int i, j = 0;
+  for (i = 0; i <= 1; i++) {
+    j = (j << 1) | digitalRead(dipadd[i]);   // read each input pin
+  }
+  return j; //return address
+}
+
+//--------------------------------------------------------set digit position
+int dipPos[] = {4, 16, 13, 26, 25};
+//Get the switches state for # of positions
+byte getdigit() {
+  int i, j = 0;
+  for (i = 0; i <= 4; i++) {
+    j = (j << 1) | digitalRead(dipPos[i]);   // read each input pin
+  }
+  return j; //return address
+}
+//--------------------- RF VARIABLE -----------------------------------------------//
+int channelmap[] = {5, 10, 20, 30,35,40,45,50,55,60,65,70,75,80,85,90,95,100};
+int Mas_to_Sec_Address=5,Remote_and_Mas_channel=3,recievedata_RF_channel=3,mas_send_sec_rec_ch_num_1=5,mas_send_sec_rec_ch_num=5;
+int channel,sec_channel = 5;
+int mas_send_channel;
+bool RF_channel_updated = false, ch_dis_blink = false, channel_save = false, channel_setting = false, RF_channel_scan = false;
+int no_of_grades = 4;
+int digit_max = 12, gill_digit_shift = 0,mas_rec_ch_num=0,mas_rec_ch_num_1=0;
+int SOFTWARE_VERSION = 5; /// VERSION 5 SOFTWARE WITH CHANNEL CONTROL0
+bool first_time_price = false;
+int def_master_ch = 8, def_secondary_ch = 10;
+
+int cashoo = 0;
+int creditoo = 0;
+int debitoo = 0;
+int foo = 1,foo_firstwrite = 0;
+String inputMessage5 = "1";
+int ftime = 0;
+int timetoflash = 6000;
+int flashstyle = 1;
+int fstyle = 1;
+//------------------ PUMPTOPPER WIFI -----------------------------------//
+//VARIABLES TO MERGE PUMPTOPPER AND 12INCH
+bool pumptopper_pcb = false, sleep_mode = false;
+bool  higher_byte_first = false, flip_digit = false, static_board = false, long_static_double = false;
+int last_brightness = 240;
+    //-----------------------------------digitpos Position setting------------------------------------------
+int posstart = 0;
+int idx[48] = {};
+int idx_1[48] = {};
+int idx_2[48] = {};
+//--------------------- ESP NOW SETUP -------------------------------------//
+//------------------- ESP NOW INITIALISATION -----------------------//
+// Global copy of slave
+
+#define NUMSLAVES 20
+esp_now_peer_info_t Temp_slaves[NUMSLAVES] = {};//, Permanent_paired_Slaves [NUMSLAVES] = {};
+String Permanent_paired_Slaves[NUMSLAVES];
+int Permanent_num_paired = 0;
+String Permanent_Slaves= "";
+int SlaveCnt = 0,hmicount =0;
+uint8_t mac_current_Address[6];
+String mac_current_Address_str = "";
+bool one_time_init = false,Delivery_fail=false;
+#define CHANNEL 1
+#define PRINTSCANRESULTS 0
+#define ESPNOW_MAXDELAY 512
+static xQueueHandle s_example_espnow_queue;
+// REPLACE WITH YOUR RECEIVER MAC Address
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+// Must match the sender structure
+typedef struct struct_message {
+    char a[110];
+    int b;
+    float c;
+    bool d;
+} struct_message;
+
+struct_message myData;
+// Define the maximum size for the char array
+char myDataA[110];
+// Function to convert uint64_t to hexadecimal string using dtostrf
+//void uint64ToHexString(uint64_t value, char *hexString) {
+  //  snprintf(hexString, 17, "%llx", value);
+//}
+void uint64ToHexString(uint64_t value, char *hexString) {
+    snprintf(hexString, 13, "%012llx", value);
+}
+
+
+// Define the structure to store MAC addresses in byte format
+uint8_t Permanent_paired_Slaves_bytes[NUMSLAVES][6];
+
+
+
+
+String msg1;
+bool New_ESP_NOW_DATA_Recieve = false;
+// Init ESP Now with fallback
+void InitESPNow() {
+  WiFi.disconnect();
+  if (esp_now_init() == ESP_OK) {
+    Serial.println("ESPNow Init Success");
+  }
+  else {
+    Serial.println("ESPNow Init Failed");
+    // Retry InitESPNow, add a counte and then restart?
+    // InitESPNow();
+    // or Simply Restart
+    ESP.restart();
+  }
+}
+
+// config AP SSID
+void configDeviceAP() {
+  String Prefix = "Slave:";
+  String Mac = WiFi.macAddress();
+  String SSID = Prefix + Mac;
+  Serial.println(Mac);
+  String Password = "123456789";
+  bool result = WiFi.softAP(SSID.c_str(), Password.c_str(), CHANNEL, 0);
+  if (!result) {
+    Serial.println("AP Config failed.");
+  } else {
+    Serial.println("AP Config Success. Broadcasting with AP: " + String(SSID));
+  }
+}
+/*
+String generatePassword(const uint8_t macAddresses[][MAX_MAC_LENGTH], int numAddresses) {
+    const int HASH_LENGTH = 32; // SHA-256 hash length in bytes
+    const int PASSWORD_LENGTH = 3; // Length of the desired password in characters
+
+    char concatenated[MAX_MAC_LENGTH * numAddresses * 2]; // Double the length for hexadecimal representation
+    unsigned char hash[HASH_LENGTH]; // SHA-256 produces 32 bytes hash
+    char password[PASSWORD_LENGTH + 1]; // Plus one for null terminator
+
+    // Concatenate MAC addresses into a single string
+    int index = 0;
+    for (int i = 0; i < numAddresses; ++i) {
+        for (int j = 0; j < MAX_MAC_LENGTH; ++j) {
+            sprintf(&concatenated[index], "%02X", macAddresses[i][j]);
+            index += 2;
+        }
+    }
+
+    // Calculate SHA-256 hash of the concatenated string
+    mbedtls_sha256_context sha256_ctx;
+    mbedtls_sha256_init(&sha256_ctx);
+    mbedtls_sha256_starts(&sha256_ctx, 0); // 0 for SHA-256
+    mbedtls_sha256_update(&sha256_ctx, (const unsigned char *)concatenated, strlen(concatenated));
+    mbedtls_sha256_finish(&sha256_ctx, hash);
+    mbedtls_sha256_free(&sha256_ctx);
+
+    // Convert hash to hexadecimal string
+    sprintf(password, "%02X%02X%02X", hash[0], hash[1], hash[2]);
+    password[PASSWORD_LENGTH] = '\0'; // Null-terminate the password string
+
+    return String(password);
+}*/
+
+typedef unsigned char byte;
+void generatePassword(const uint8_t macAddresses[][MAX_MAC_LENGTH], int numAddresses) {
+    const int HASH_LENGTH = 32; 
+    const int PASSWORD_LENGTH = 6; 
+
+    char concatenated[MAX_MAC_LENGTH * numAddresses * 2]; 
+    unsigned char hash[HASH_LENGTH]; 
+    char password[PASSWORD_LENGTH + 1]; 
+
+    // Concatenate MAC addresses
+    int index = 0;
+    for (int i = 0; i < numAddresses; ++i) {
+        for (int j = 0; j < MAX_MAC_LENGTH; ++j) {
+            sprintf(&concatenated[index], "%02X", macAddresses[i][j]);
+            index += 2;
+        }
+    }
+    Serial.println("Concatenated MAC addresses: " + String(concatenated)); 
+
+     // Calculate SHA-256 hash of the concatenated string
+    mbedtls_sha256_context sha256_ctx;
+    mbedtls_sha256_init(&sha256_ctx);
+    mbedtls_sha256_starts(&sha256_ctx, 0); // 0 for SHA-256
+    mbedtls_sha256_update(&sha256_ctx, (const unsigned char *)concatenated, strlen(concatenated));
+    mbedtls_sha256_finish(&sha256_ctx, hash);
+    mbedtls_sha256_free(&sha256_ctx);
+
+    // Print SHA-256 Hash (assuming placeholder values in the hash)
+    Serial.print("SHA-256 Hash (hexadecimal): ");
+    for (int i = 0; i < HASH_LENGTH; ++i) {
+        Serial.print(hash[i], HEX); 
+        if (i < HASH_LENGTH - 1) { // Add spacing between bytes
+            Serial.print(" ");
+        }
+    }
+    Serial.println(); 
+
+  // Extract bytes for the password
+byte second_byte = hash[1];
+byte second_last_byte = hash[30];
+
+// Combine bytes
+    password_mac_gen[0] = second_byte;
+    password_mac_gen[1] = second_last_byte;
+
+}
+// Function to calculate CRC32 checksum over a given data array
+uint32_t calculateCRC(const uint8_t *data, size_t length) {
+    uint32_t crc = 0xFFFFFFFF; // Initial CRC value
+
+    // Iterate over each byte in the data array
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= data[i]; // XOR with next data byte
+        // For each bit in the byte
+        for (int j = 0; j < 8; ++j) {
+            if (crc & 0x00000001) { // If LSB is 1
+                crc = (crc >> 1) ^ CRC32_POLYNOMIAL; // XOR with polynomial if LSB is 1
+            } else {
+                crc >>= 1; // Shift right if LSB is 0
+            }
+        }
+    }
+    crc ^= 0xFFFFFFFF; // Final XOR value
+    return crc;
+}
+void generatePacket(uint8_t *packet, uint8_t *password_mac_gen, uint32_t data) {
+    // Set the first two bytes of the packet to the password
+    packet[0] = password_mac_gen[0];   // First byte of password
+    packet[1] = password_mac_gen[1];   // Second byte of password
+
+    // Set the next four bytes of the packet to the data
+    packet[2] = data & 0xFF;            // First byte
+    packet[3] = (data >> 8) & 0xFF;     // Second byte
+    packet[4] = 0x00;   // Third byte
+    packet[5] = 0x00;    // Fourth byte
+
+    // Calculate CRC checksum over the entire packet except the last byte (CRC byte)
+    uint32_t crc = calculateCRC(packet, 6);
+
+    // Append CRC to the packet at the last byte
+    packet[6] = crc & 0xFF;  // Low byte
+}
+
+
+void sendPacketViaSerial2(const uint8_t *packet, size_t length) {
+
+    for (size_t i = 0; i < packet_size; ++i) {
+        Serial2.write(packet[i]);
+        //Serial.print(packet[i], HEX);
+        //Serial.print(" ");
+    }
+    Serial.println();
+}
+//---------------------- The Signs varible setup and memory setup---------------
+
+String digits[36] = {"D01", "D02", "D03", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12", "D13", "D14", "D15",
+                     "D16", "D17", "D18", "D19", "D20", "D21", "D22", "D23", "D24", "D25", "D26", "D27", "D28", "D29", "D30",
+                     "D31", "D32", "D33", "D34", "D35", "D36"
+                    };
+
+uint8_t maxdigits = 37;
+uint8_t digitval[48] = {8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8};
+uint8_t digitval_mem[48];
+uint8_t digitval_mem_pos = 0;
+uint8_t digitpos = 0;
+uint8_t digitpos_mem;
+uint8_t digitpos_mem_pos = 40;
+uint8_t digitcount = 3;
+uint8_t fontstyle = 0;
+uint8_t fontstyle_mem;
+uint8_t fontstyle_mem_pos = 41;
+int brightness = 4,brightcmd = 4;
+uint8_t brightness_mem;
+uint8_t brightness_mem_pos = 42;
+uint8_t autobright = 1;
+uint8_t autobright_mem;
+uint8_t autobright_mem_pos = 43;
+uint8_t sensormode = 0;
+uint8_t sensormode_mem;
+uint8_t sensormode_mem_pos = 44;
+uint8_t currentpos = 0;
+uint8_t maxbrightness = 9;
+
+char essid[20];
+String Sessid;
+
+char epass[20];
+String Sepass;
+
+//-----------------------DIGIT PIN SETUP-----------------------
+
+int lightsensorread = 0;    // used for Storing Light Sensor Readings
+int lightsensorpin = 39;     // used for setting Light Sensor Pin activate
+
+int resetssidpin = 35;      // used to reset the SSID and PASSWORD to Default
+int pumptopperpcb = 15;
+int dataPin = 5;            // SIN
+int outputEnablePin = 17, outputEnablePin_PUMPTOPPER = 17;    // Brigness control
+int latchPin = 19;           // RCLK
+int clockPin = 18;          // SRCLK
+int cashled = 21, debitled = 22, creditled =23;
+int setcreditval = 0;
+int setcashval = 0;
+int setdebitval = 0;
+int dp1pin = 32;  //  Dipswitch 1
+int dp2pin = 33;
+int dp3pin = 25;
+int dp4pin = 26;
+int dp5pin = 13;
+int dp6pin = 16;
+int dp7pin = 4;   //  Dipswitch 7
+
+//---------------------- Digit Setup---------------
+
+bool flash = false;
+bool remoteflash = false;
+bool restartit = false;
+bool valuedatain = false;
+
+int resetcount = 0;
+
+int fmaxbrightness;
+int16_t newbrightness;
+
+
+//-------------------------- Timer Setup -------------------------------
+
+unsigned long previous_sensor_Millis = 0;
+unsigned long sensor_interval = 60000;
+unsigned long previous_restart_Millis = 0;
+unsigned long restart_interval = 10000;
+unsigned long previous_resetssid_Millis = 0;
+unsigned long resetssid_interval = 10000;
+unsigned long previous_button_Millis = 0;
+unsigned long button_interval = 500;
+unsigned long previous_incoming_Millis = 0;
+unsigned long incoming_interval = 15000;
+unsigned long previous_reset_Millis = 0;
+unsigned long reset_interval = 10000;
+unsigned long previous_valuedata_Millis = 0;
+unsigned long valuedata_interval = 3000;
+
+unsigned long current_millis;
+
+
+//---------------------------------Digit Font Style----------------
+
+
+//----------font[0]=SQUARE, font[1]=FUTURA, font[2]=TRAP
+
+byte font[4][25][4] = {
+  {
+    //Square
+    {0b01111111, 0b11111111, 0b11111111, 0b11111111}, //=0
+    {0b00000000, 0b00000000, 0b11111111, 0b11111100}, //=1
+    {0b11111001, 0b11111111, 0b11110111, 0b11111111}, //=2
+    {0b11111000, 0b00001111, 0b11111111, 0b11111111}, //=3
+    {0b11111111, 0b11000000, 0b11111111, 0b11111100}, //=4
+    {0b11111111, 0b11001111, 0b11111111, 0b00111111}, //=5
+    {0b11111111, 0b11111111, 0b11111111, 0b00111111}, //=6
+    {0b01111000, 0b00000000, 0b11111111, 0b11111111}, //=7
+    {0b11111111, 0b11111111, 0b11111111, 0b11111111}, //=8
+    {0b11111111, 0b11001111, 0b11111111, 0b11111111}, //=9
+    {0b00000000, 0b00000000, 0b00000000, 0b00000000}, //=off
+    {0b11111111, 0b11111100, 0b11111111, 0b11111111}, //=A
+    {0b11111111, 0b11111111, 0b11111111, 0b00000000}, //=b
+    {0b01111111, 0b11111111, 0b00000000, 0b00000011}, //=C
+    {0b11111001, 0b11111111, 0b11111111, 0b11111100}, //=d
+    {0b11111111, 0b11111111, 0b00000000, 0b00000011}, //=E
+    {0b11111111, 0b11110000, 0b00000000, 0b00000011}, //=F
+    {0b11111111, 0b11111100, 0b11111111, 0b11111100}, //=H
+    {0b11111111, 0b11110000, 0b00000000, 0b11111111}, //=P
+    {0b11111111, 0b11001111, 0b11111111, 0b01111111}, //=S
+    {0b10000000, 0b11111111, 0b11111111, 0b00000000}, //=o
+    {0b10000001, 0b11000000, 0b00000111, 0b00000000}, //=-
+    {0b01111111, 0b11111111, 0b11111111, 0b11111100}, //=U
+    {0b01111111, 0b11110000, 0b00000000, 0b11111111}, //=M
+    {0b01111111, 0b11000000, 0b11111111, 0b11111111}, //=M
+    
+    
+  },
+  {
+    //Furtura
+    {0b01110111, 0b11111011, 0b01111111, 0b11110111}, //=0
+    {0b00000000, 0b00000000, 0b11111111, 0b11111110}, //=1
+    {0b11110101, 0b01111111, 0b11110011, 0b11110111}, //=2
+    {0b11110100, 0b00011011, 0b01111111, 0b11110111}, //=3
+    {0b11111111, 0b11000000, 0b11111111, 0b11111100}, //=4
+    {0b11111110, 0b11011011, 0b01111101, 0b00111111}, //=5
+    {0b11110111, 0b11111011, 0b01111101, 0b01110111}, //=6
+    {0b01111100, 0b00000000, 0b11111111, 0b11111111}, //=7
+    {0b11110111, 0b01111011, 0b01111101, 0b11110111}, //=8
+    {0b11110110, 0b11011011, 0b01111111, 0b11110111}, //=9
+    {0b00000000, 0b00000000, 0b00000000, 0b00000000}, //=off
+    {0b11111111, 0b11111100, 0b11111111, 0b11111111}, //=A
+    {0b11111111, 0b11111111, 0b11111111, 0b00000000}, //=b
+    {0b01111111, 0b11111111, 0b00000000, 0b00000011}, //=C
+    {0b11111001, 0b11111111, 0b11111111, 0b11111100}, //=d
+    {0b11111111, 0b11111111, 0b00000000, 0b00000011}, //=E
+    {0b11111111, 0b11110000, 0b00000000, 0b00000011}, //=F
+    {0b11111111, 0b11111100, 0b11111111, 0b11111100}, //=H
+    {0b11111111, 0b11110000, 0b00000000, 0b11111111}, //=P
+    {0b11111111, 0b11001111, 0b11111111, 0b01111111}, //=S
+    {0b10000000, 0b11111111, 0b11111111, 0b00000000}, //=o
+    {0b10000001, 0b11000000, 0b00000111, 0b00000000}, //=-
+    {0b01111111, 0b11111111, 0b11111111, 0b11111100}, //=U
+    {0b01111111, 0b11110000, 0b00000000, 0b11111111}, //=M
+    {0b01111111, 0b11000000, 0b11111111, 0b11111111}, //=M
+  },
+  {
+    // Trap
+    //-----32  <------------    1    -------------------
+    {0b01111111, 0b10111111, 0b11111110, 0b11111111}, //=0
+    {0b00000000, 0b00000000, 0b10111110, 0b11111000}, //=1
+    {0b11011001, 0b01111111, 0b11010011, 0b11111111}, //=2
+    {0b11011000, 0b01001101, 0b11111111, 0b11111111}, //=3
+    {0b11101110, 0b11000000, 0b10111111, 0b11111000}, //=4
+    {0b11111110, 0b11001101, 0b11111101, 0b00011111}, //=5
+    {0b11111111, 0b11111111, 0b11111101, 0b00011111}, //=6
+    {0b01011000, 0b00000000, 0b10111111, 0b11111111}, //=7
+    {0b11111111, 0b11111111, 0b11111111, 0b11111111}, //=8
+    {0b11111110, 0b11001101, 0b11111111, 0b11111111}, //=9
+    {0b00000000, 0b00000000, 0b00000000, 0b00000000}, //=off
+    {0b11111111, 0b11111100, 0b11111111, 0b11111111}, //=A
+    {0b11111111, 0b11111111, 0b11111111, 0b00000000}, //=b
+    {0b01111111, 0b11111111, 0b00000000, 0b00000011}, //=C
+    {0b11111001, 0b11111111, 0b11111111, 0b11111100}, //=d
+    {0b11111111, 0b11111111, 0b00000000, 0b00000011}, //=E
+    {0b11111111, 0b11110000, 0b00000000, 0b00000011}, //=F
+    {0b11111111, 0b11111100, 0b11111111, 0b11111100}, //=H
+    {0b11111111, 0b11110000, 0b00000000, 0b11111111}, //=P
+    {0b11111111, 0b11001111, 0b11111111, 0b01111111}, //=S
+    {0b10000000, 0b11111111, 0b11111111, 0b00000000}, //=o
+    {0b10000001, 0b11000000, 0b00000111, 0b00000000}, //=-
+    {0b01111111, 0b11111111, 0b11111111, 0b11111100}, //=U
+    {0b01111111, 0b11110000, 0b00000000, 0b11111111}, //=M
+    {0b01111111, 0b11000000, 0b11111111, 0b11111111}, //=M
+  }
+};
+
+
+int freq = 5000,freq_cdc = 1000 , resolution_cdc = 8;  //5000  //temp
+int ledChannel_3 = 3;// pile on 
+int resolution = 8;
+int ledChannel_4 = 4, freq_1 = 1000 , resolution_1 = 8; //pumptopper
+int ledChannel_0 = 0, ledChannel_1 = 1, ledChannel_2 = 2;
+
+
+int brightnessmap[] = {540, 220, 160, 100, 0};
+byte brightnessmap2[] = {0, 25, 40, 55, 100};   // brightness levels for digits
+byte brightnessmap3[] = {255, 230, 215, 200, 185};   // brightness levels for 
+//------------------------ flasher setup ===============
+int price1[48];
+int price2[48];
+
+bool mode = 0;
+bool cashdebitcredit = 0;
+
+
+//---------------------Timer Setup----------------
+
+RBD::Timer timer;
+RBD::Timer timermode;
+RBD::Timer timerflash;
+RBD::Timer timerwifiswitch;
+RBD::Timer timerv5;
+RBD::Timer timerresend;
+RBD::Timer timer_blink_channel;
+RBD::Timer hmitimer;
+
+
+//-----------------------0-----------1----------2----------3-----------4----------5---------6-----------7----------8----------9-------BLANK(10)--(11)--A----(12)---b----(13)--C---(14)-d------(15)--E---(16)--F----(17)--H----(18)-P-----(19)-S------(20)-o---  (21)  -  ---U-(22) -^M-(23)
+byte dec_digits[25] = {0b1000000, 0b1111001, 0b0100100, 0b0110000, 0b0011001, 0b0010010, 0b0000010, 0b1111000, 0b0000000, 0b0010000, 0b1111111, 0b0001000 , 0b0000011, 0b1000110, 0b0100001, 0b0000110, 0b0001110, 0b0001001, 0b0001100, 0b0010010, 0b0100011, 0b0111111, 0b1000001, 0b1001100, 0b1011000};
+
+
+
+String readFile(fs::FS &fs, const char * path){
+  Serial.printf("Reading file: %s\r\n", path);
+  File file = fs.open(path, "r");
+  if(!file || file.isDirectory()){
+    Serial.println("- empty file or failed to open file");
+    return String();
+  }
+  Serial.println("- read from file:");
+  String fileContent;
+  while(file.available()){
+    fileContent+=String((char)file.read());
+  }
+  Serial.println(fileContent);
+  return fileContent;
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+  Serial.printf("Writing file: %s\r\n", path);
+  File file = fs.open(path, "w");
+  if(!file){
+    Serial.println("- failed to open file for writing");
+    return;
+  }
+  if(file.print(message)){
+    Serial.println("- file written");
+  } else {
+    Serial.println("- write failed");
+  }
+}
+
+void updateShiftRegister()
+{
+  if((pumptopper_pcb) == false )
+  {
+
+    digitalWrite(latchPin, 0);
+    for (int i = 3; i >= 0; i--) {
+      for (int j = 0; j <= 3; j++) {
+        if ((currentpos == (i + digitpos)) && flash) {
+          if (digitval[i + digitpos] >= 0 && digitval[i + digitpos] <= 9) {
+            Serial.println(F("Current Position Flash"));
+            shiftOut(dataPin, clockPin, MSBFIRST, font[fontstyle][10][j]);
+          } else if (digitval[i + digitpos] == 10) {
+            Serial.println(F("OFF Flash"));
+            shiftOut(dataPin, clockPin, MSBFIRST, font[fontstyle][8][j]);
+          }
+        } else if (cashdebitcredit == 0){
+          shiftOut(dataPin, clockPin, MSBFIRST, font[fontstyle][digitval[i + digitpos]][j]);
+          //Serial.println((digitval[i + digitpos]));
+        }
+        else if (cashdebitcredit == 1){
+          shiftOut(dataPin, clockPin, MSBFIRST, font[fontstyle][digitval[i + digitpos+digit_max]][j]);
+          //Serial.println((digitval[i + digitpos]));
+        }
+      }
+    }
+    Serial.println("UPDATED SHIFT PILEON ");
+    digitalWrite(latchPin, 1);
+  }
+  else
+  {
+    Serial.println("Pumptopper UPdateShiftReg -------- ");
+    if (sleep_mode == false)
+    {
+      digitalWrite(latchPin, 0);
+      delay(1);
+      if ((cashdebitcredit == 0) && (long_static_double == false))
+      {
+        for (int i = 23; i >= 0; i--)
+        {
+
+          if ((idx[i] == (currentpos - digitpos)) && flash)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[10]);
+            Serial.println(F("Current Position Flash"));
+          }
+          else if (flip_digit == false)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[idx[i]]]);
+
+            //shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[i]]);
+            //Serial.print("standard ==  ");
+            //Serial.println(digitval[idx[i]]);
+          }
+          else
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[idx[i]]]);
+            //Serial.println(price1[idx_1[i]]);
+            //Serial.println("cash = ");
+            //Serial.println(idx_1[i]);
+          }
+        }
+        //digitalWrite(latchPin,1);
+      }
+      else if ((cashdebitcredit == 1) && (long_static_double == false))
+      {
+        //digitalWrite(latchPin,0);
+        for (int i = 23; i >= 0; i--)
+        {
+          if (higher_byte_first == true)
+          {
+            idx_2[i] = (idx[i] - digit_max);
+            //idx_2[i]= (idx[i]);
+            flip_digit = true;
+          }
+          else
+          {
+            //idx_2[i]= (idx[i]+(4 * 3));
+            idx_2[i] = (idx[i] + digit_max);
+            flip_digit = false;
+          }
+
+
+
+          if ((idx[i] == (currentpos - digitpos)) && flash)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[10]);
+            Serial.println(F("credit Current Position Flash"));
+          }
+          else if ((flip_digit == false) && (static_board == false))
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[idx_2[i]]]);
+            //Serial.println(digitval[idx_2[i]]);
+            //Serial.println(price1[idx_1[i]]);
+            //Serial.print("cred = ");
+            //Serial.println(idx_2[i]);
+          }
+          else if (static_board == false)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[idx_2[i]]]);
+            //Serial.println(price1[idx_1[i]]);
+            //Serial.print("cred = ");
+            //Serial.println(idx[i]);
+            //Serial.println(idx_2[i]);
+          }
+
+        }
+        //digitalWrite(latchPin,1);
+      }
+      else if (long_static_double == true)
+      {
+
+        for (int i = 23; i >= 0; i--)
+        {
+          if ((idx[i] == (currentpos - digitpos)) && flash)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[10]);
+          }
+          else
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[digitval[idx[i]]]);
+          }
+        }
+        //digitalWrite(latchPin,1);
+      }
+      delay(1);
+      digitalWrite(latchPin, 1);
+      //delay(500);
+    }
+  }
+  
+}
+
+// ---------------------------------- GRADE CHANGE ----------------------------//
+void gradechange()
+{
+  int tempmul, gradmul;
+  for (int k = 1; k <= 8; k++)
+  {
+    tempmul = k * 3;
+    gradmul = gradval[k] * 3;
+    idx[(tempmul - 1)] = (gradmul - 1);
+    idx[(tempmul - 2)] = (gradmul - 2);
+    idx[(tempmul - 3)] = (gradmul - 3);
+  }
+  delay(200);
+}
+
+void gradechange_rec()
+{
+  for (int i = 0; i < 48; i = i + 3)
+  {
+    int l = ((i / 3) + 1);
+    int grad;
+    grad = gradval[l];
+    digitval[i + 2] = grad % 10;
+    grad /= 10;
+    digitval[i + 1] = grad % 10;
+    grad /= 10;
+    digitval[i] = 20; // 0
+  }
+  updateShiftRegister();
+}
+
+
+void position_start (int posstart1) {
+  //posstart = (switch4) + (switch5 << 1) + (switch6 << 2) + (switch7 << 3) + (switch3 << 4);
+  //Serial.print("posstart value= ");
+  //Serial.println(posstart);
+  posstart = posstart1;
+  //  Pro 1  -  Pro 2  -  Pro 3 -  Pro 4  -   Pro 5  -  Pro 6   -
+  //  0,1,2  -  3,4,5  -  6,7,8 - 9,10,11 - 12,13,14 -  15,16,17  -
+
+  //    Pro 7    -    Pro 8   -    Pro 9  -  Pro 10  -  Pro 11  -  Pro 12   -
+  //    18,19,20  -  21,22,23  -  24,25,26 - 27,28,29 - 30,31,32 -  33,34,35 -
+
+
+  switch (posstart1) { //  For 4 Pro 1 Row TOP 4,1,2,3 order   no Dip
+    case 0:          //  For 3 Pro 1 Row TOP 1,2,3 cash , 4,5,6, credit order   // no Dip switch
+    case 6:
+    case 16:
+    case 20:
+      idx[0] = {0};
+      idx[1] = {1};
+      idx[2] = {2};
+      idx[3] = {3};
+      idx[4] = {4};
+      idx[5] = {5};
+      idx[6] = {6};
+      idx[7] = {7};
+      idx[8] = {8};
+      idx[9] = {9};
+      idx[10] = {10};
+      idx[11] = {11};
+      idx[12] = {12};
+      idx[13] = {13};
+      idx[14] = {14};
+      idx[15] = {15};
+      idx[16] = {16};
+      idx[17] = {17};
+
+      break;
+    case 1:          //  For 3 Pro 1 Row TOP 3,1,4 cash , 6,4,8, credit order   // switch 4 = ON,switch 5 = OFF,switch 6 = OFF,switch 7 = OFF
+      idx[0] = {6};
+      idx[1] = {7};
+      idx[2] = {8};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {9};
+      idx[7] = {10};
+      idx[8] = {11};
+      idx[9] = {12};
+      idx[10] = {13};
+      idx[11] = {14};
+      idx[12] = {15};
+      idx[13] = {16};
+      idx[14] = {17};
+      idx[15] = {18};
+      idx[16] = {19};
+      idx[17] = {20};
+      break;
+    case 2:          //  For 3 Pro 1 Row TOP (3,4,5, cash , 7,8,9 credit) order   // switch 4 = OFF,switch 5 = ON,switch 6 = OFF,switch 7 = OFF
+    case 19:
+    case 23:
+
+      idx[0] = {6};
+      idx[1] = {7};
+      idx[2] = {8};
+      idx[3] = {9};
+      idx[4] = {10};
+      idx[5] = {11};
+      idx[6] = {12};
+      idx[7] = {13};
+      idx[8] = {14};
+      idx[9] = {15};
+      idx[10] = {16};
+      idx[11] = {17};
+      idx[12] = {18};
+      idx[13] = {19};
+      idx[14] = {20};
+      idx[15] = {21};
+      idx[16] = {22};
+      idx[17] = {23};
+      break;
+    case 3:          //  For 3 Pro 1 Row TOP 1,3,2 cash , 6,8,7 credit order   // switch 4 = ON,switch 5 = ON,switch 6 = OFF,switch 7 = OFF
+      idx[0] = {0};
+      idx[1] = {1};
+      idx[2] = {2};
+      idx[3] = {6};
+      idx[4] = {7};
+      idx[5] = {8};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {9};
+      idx[10] = {10};
+      idx[11] = {11};
+      idx[12] = {12};
+      idx[13] = {13};
+      idx[14] = {14};
+      idx[15] = {15};
+      idx[16] = {16};
+      idx[17] = {17};
+      break;
+    case 4:     //  For 4 Pro 1 Row TOP 6,1,2,3,4, cash ,12, 7,8,9,10 credit order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = OFF
+      idx[0] = {15};
+      idx[1] = {16};
+      idx[2] = {17};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {9};
+      idx[13] = {10};
+      idx[14] = {11};
+      idx[15] = {12};
+      idx[16] = {13};
+      idx[17] = {14};
+      break;
+    case 5:       //  For 4 Pro 1 Row TOP 4,1,2,3, cash , 10,7,8,9 credit order   // switch 4 = ON,switch 5 = OFF,switch 6 = ON,switch 7 = OFF
+    case 17:
+    case 21:
+    case 29:
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {12};
+      idx[13] = {13};
+      idx[14] = {14};
+      idx[15] = {15};
+      idx[16] = {16};
+      idx[17] = {17};
+      break;
+    case 7:       //  For 5 Pro 1 Row TOP 5,1,2,3,4 cash // 11,7,8,9,10 credit order   // switch 4 = ON,switch 5 = ON,switch 6 = ON,switch 7 = OFF
+    case 15:       // gillbarco 6 grade master
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {9};
+      idx[13] = {10};
+      idx[14] = {11};
+      idx[15] = {15};
+      idx[16] = {16};
+      idx[17] = {17};
+      break;
+    case 8:         // 3 Pro 1 Row  // switch 4 = OFF,switch 5 = OFF,switch 6 = OFF,switch 7 = ON
+      idx[0] = {3};
+      idx[1] = {4};
+      idx[2] = {5};
+      idx[3] = {6};
+      idx[4] = {7};
+      idx[5] = {8};
+      idx[6] = {9};
+      idx[7] = {10};
+      idx[8] = {11};
+      idx[9] = {12};
+      idx[10] = {13};
+      idx[11] = {14};
+      idx[12] = {15};
+      idx[13] = {16};
+      idx[14] = {17};
+      idx[15] = {18};
+      idx[16] = {19};
+      idx[17] = {20};
+      break;
+    case 9:         // 3 Pro 1 Row// 6,4,5 cash // 12,10,11 credit order   // switch 4 = OFF,switch 5 = OFF,switch 6 = OFF,switch 7 = ON
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {9};
+      idx[4] = {10};
+      idx[5] = {11};
+      idx[6] = {15};
+      idx[7] = {16};
+      idx[8] = {17};
+      idx[9] = {0};
+      idx[10] = {1};
+      idx[11] = {2};
+      idx[12] = {3};
+      idx[13] = {4};
+      idx[14] = {5};
+      idx[15] = {6};
+      idx[16] = {7};
+      idx[17] = {8};
+      break;
+    case 10:         // 3 Pro 1 Row//4 Pro 1 Row TOP  4,x,10,X order   // switch 4 = OFF,switch 5 = OFF,switch 6 = OFF,switch 7 = ON
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {35};
+      idx[4] = {35};
+      idx[5] = {35};
+      idx[6] = {27};
+      idx[7] = {28};
+      idx[8] = {29};
+      idx[9] = {35};
+      idx[10] = {35};
+      idx[11] = {35};
+      break;
+    case 11:
+      //digitpos = 9;      // 2 Pro 2 Row 5,6,11,12 order   // switch 4 = ON,switch 5 = OFF,switch 6 = OFF,switch 7 = ON
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {15};
+      idx[4] = {16};
+      idx[5] = {17};
+      idx[6] = {30};
+      idx[7] = {31};
+      idx[8] = {32};
+      idx[9] = {33};
+      idx[10] = {34};
+      idx[11] = {35};
+      break;
+    case 12:     //  For 4 Pro 2 Row TOP 4,1,2,3,10,7,8,9 order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {27};
+      idx[13] = {28};
+      idx[14] = {29};
+      idx[15] = {18};
+      idx[16] = {19};
+      idx[17] = {20};
+      idx[18] = {21};
+      idx[19] = {22};
+      idx[20] = {23};
+      idx[21] = {24};
+      idx[22] = {25};
+      idx[23] = {26};
+      break;
+    case 13:     //  For 4 Pro 2 Row TOP 5,1,2,3,11,7,8,9 order   // switch 4 = ON,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {30};
+      idx[13] = {31};
+      idx[14] = {32};
+      idx[15] = {18};
+      idx[16] = {19};
+      idx[17] = {20};
+      idx[18] = {21};
+      idx[19] = {22};
+      idx[20] = {23};
+      idx[21] = {24};
+      idx[22] = {25};
+      idx[23] = {26};
+      break;
+    case 14:  //  For 4 Pro 2 Row TOP 4,4,5 order   // switch 4 = OFF,switch 5 = ON,switch 6 = ON,switch 7 = ON
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {9};
+      idx[4] = {10};
+      idx[5] = {11};
+      idx[6] = {12};
+      idx[7] = {13};
+      idx[8] = {14};
+      idx[9] = {15};
+      idx[10] = {16};
+      idx[11] = {17};
+      idx[12] = {18};
+      idx[13] = {19};
+      idx[14] = {20};
+      idx[15] = {21};
+      idx[16] = {22};
+      idx[17] = {23};
+      break;
+    case 18:
+    case 22:
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {12};
+      idx[4] = {13};
+      idx[5] = {14};
+      idx[6] = {15};
+      idx[7] = {16};
+      idx[8] = {17};
+      idx[9] = {0};
+      idx[10] = {1};
+      idx[11] = {2};
+      idx[12] = {3};
+      idx[13] = {4};
+      idx[14] = {5};
+      idx[15] = {6};
+      idx[16] = {7};
+      idx[17] = {8};
+      break;
+    case 24:     //  For 3 Pro 2 Row TOP 1,2,3,6,7,8 order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {0};
+      idx[1] = {1};
+      idx[2] = {2};
+      idx[3] = {3};
+      idx[4] = {4};
+      idx[5] = {5};
+      idx[6] = {6};
+      idx[7] = {7};
+      idx[8] = {8};
+      idx[9] = {15};
+      idx[10] = {16};
+      idx[11] = {17};
+      idx[12] = {18};
+      idx[13] = {19};
+      idx[14] = {20};
+      idx[15] = {21};
+      idx[16] = {22};
+      idx[17] = {23};
+      break;
+    case 25:     //  For 4 Pro 1 Row TOP 4,9,5,10 order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {9};
+      idx[1] = {10};
+      idx[2] = {11};
+      idx[3] = {24};
+      idx[4] = {25};
+      idx[5] = {26};
+      idx[6] = {12};
+      idx[7] = {13};
+      idx[8] = {14};
+      idx[9] = {27};
+      idx[10] = {28};
+      idx[11] = {29};
+      idx[12] = {15};
+      idx[13] = {16};
+      idx[14] = {17};
+      idx[15] = {30};
+      idx[16] = {31};
+      idx[17] = {32};
+      break;
+    case 26:     //  For 3G 1 Row TOP 5,9,10 order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {24};
+      idx[4] = {25};
+      idx[5] = {26};
+      idx[6] = {27};
+      idx[7] = {28};
+      idx[8] = {29};
+      idx[9] = {27};
+      idx[10] = {28};
+      idx[11] = {29};
+      idx[12] = {15};
+      idx[13] = {16};
+      idx[14] = {17};
+      idx[15] = {30};
+      idx[16] = {31};
+      idx[17] = {32};
+      break;
+    case 27:     //  For 3G 1 Row TOP 6,7,8 order   // switch 4 = OFF,switch 5 = OFF,switch 6 = ON,switch 7 = ON
+      idx[0] = {15};
+      idx[1] = {16};
+      idx[2] = {17};
+      idx[3] = {18};
+      idx[4] = {19};
+      idx[5] = {20};
+      idx[6] = {21};
+      idx[7] = {22};
+      idx[8] = {23};
+      idx[9] = {15};
+      idx[10] = {16};
+      idx[11] = {17};
+      idx[12] = {18};
+      idx[13] = {19};
+      idx[14] = {20};
+      idx[15] = {21};
+      idx[16] = {22};
+      idx[17] = {23};
+      break;
+    case 28:       //  For 4 Pro 1 Row TOP 5,1,2,3, cash , 10,7,8,9 credit order   // switch 4 = ON,switch 5 = OFF,switch 6 = ON,switch 7 = OFF
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {0};
+      idx[4] = {1};
+      idx[5] = {2};
+      idx[6] = {3};
+      idx[7] = {4};
+      idx[8] = {5};
+      idx[9] = {6};
+      idx[10] = {7};
+      idx[11] = {8};
+      idx[12] = {9};
+      idx[13] = {10};
+      idx[14] = {11};
+      idx[15] = {15};
+      idx[16] = {16};
+      idx[17] = {17};
+      break;
+    case 30:
+      // 3 Pro 1 Row 5,6,7,8 order
+      idx[0] = {12};
+      idx[1] = {13};
+      idx[2] = {14};
+      idx[3] = {15};
+      idx[4] = {16};
+      idx[5] = {17};
+      idx[6] = {18};
+      idx[7] = {19};
+      idx[8] = {20};
+      idx[9] = {21};
+      idx[10] = {22};
+      idx[11] = {23};
+      break;
+    case 31:
+      // 3 Pro 1 Row 6,6,4, order
+      idx[0] = {15};
+      idx[1] = {16};
+      idx[2] = {17};
+      idx[3] = {15};
+      idx[4] = {16};
+      idx[5] = {17};
+      idx[6] = {9};
+      idx[7] = {10};
+      idx[8] = {11};
+      idx[9] = {12};
+      idx[10] = {13};
+      idx[11] = {14};
+      break;
+  }
+  //============ byte status check ==============//
+  /*if ( (posstart == 6)) // || (posstart == 7))
+    {
+    higher_byte_first = true;
+    flip_digit = true;
+    }*/
+  if ((posstart == 0) || (posstart == 1) || (posstart == 2) || (posstart == 5))
+  {
+    higher_byte_first = false;
+    flip_digit = false;
+  }
+  else if ((posstart == 10) || (posstart == 11) || (posstart == 14)  || (posstart == 24) || (posstart == 25) || (posstart == 26) || (posstart == 27) || (posstart == 30))
+  {
+    static_board = true;
+  }
+  else if ((posstart == 12) || (posstart == 13))
+  {
+    long_static_double = true;
+    static_board = true;
+    digit_max = 12;
+  }
+  else if ((posstart == 6 ) || (posstart == 8) || (posstart == 16) || (posstart == 17 ) || (posstart == 18 ) || (posstart == 19 ) || (posstart == 28 ) || (posstart == 29 ) || (posstart == 3) )
+  {
+    digit_max = 15;
+  }
+  else if ((posstart == 20) || (posstart == 21 ) || (posstart == 22 ) || (posstart == 23 ) || (posstart == 9 ) || (posstart == 31) || (posstart == 7) || (posstart == 15) || (posstart == 4) )
+  {
+    digit_max = 18;
+  }
+
+  
+  // ----- EEPROM Update to last known-----
+/*
+  if (transAddress == 3) {
+    delay(3000);
+    for (int t = 0; t < 48; t++) {
+      digitval[t] = EEPROM.read(t);
+      if (digitval[t] == 255) {
+        digitval[t] = 8;
+      }
+    }
+    mem();
+
+  }*/
+  //------------------------------------------- GRADE CONTROL --------------------//
+  if (grade_control == true)
+  {
+    for (int k = 51; k <= 66; k++) {
+      gradval[k - 50] = EEPROM.read(k);
+      if ((gradval[k - 50] == 255) || (gradval[k - 50] == 0))
+      {
+        gradval[k - 50] = (gradval[k - 51] + 1);
+      }
+      Serial.println(gradval[k - 50]);
+      
+    }
+    
+    gradechange(); //update idx
+    Serial.println("digit_max");
+    digit_max=readFile(SPIFFS, "/digit_max.txt").toInt();
+    digit_max = (digit_max * 3);  //MAX GARDES IN ENVIR
+    Serial.println(digit_max);
+  }
+  
+  //gillbarco_setup = EEPROM.read(75);
+
+}
+//-------------------------------------address setting-----------------------------------------------------------------------
+void iport_r() {
+
+
+  delay(40);
+  digitalWrite(setHC, 0); // enter AT command mode
+  delay(80);
+  switch (recievedata_RF_channel) //#transAddress//recievedata_RF_channel
+  {
+    case 0:
+      Serial2.print(F("AT+C005")); // set to channel 5
+      break;
+    case 1:
+      Serial2.print(F("AT+C010")); // set to channel 10
+      break;
+    case 2:
+      Serial2.print(F("AT+C020")); // set to channel 20
+      break;
+    case 3:
+      Serial2.print(F("AT+C030")); // set to channel 30
+      break;
+    case 4:
+      Serial2.print(F("AT+C035")); // set to channel 30
+      break;
+    case 5:
+      Serial2.print(F("AT+C040")); // set to channel 30
+      break;
+    case 6:
+      Serial2.print(F("AT+C045")); // set to channel 30
+      break;
+    case 7:
+      Serial2.print(F("AT+C050")); // set to channel 30
+      break;
+    case 8:
+      Serial2.print(F("AT+C055")); // set to channel 30
+      break;
+    case 9:
+      Serial2.print(F("AT+C060")); // set to channel 30
+      break;
+    case 10:
+      Serial2.print(F("AT+C065")); // set to channel 30
+      break;
+    case 11:
+      Serial2.print(F("AT+C070")); // set to channel 30
+      break;
+    case 12:
+      Serial2.print(F("AT+C075")); // set to channel 30
+      break;
+    case 13:
+      Serial2.print(F("AT+C080")); // set to channel 30
+      break;
+    case 14:
+      Serial2.print(F("AT+C085")); // set to channel 30
+      break;
+    case 15:
+      Serial2.print(F("AT+C090")); // set to channel 30
+      break;
+    case 16:
+      Serial2.print(F("AT+C095")); // set to channel 30
+      break;
+    case 17:
+      Serial2.print(F("AT+C0100")); // set to channel 30
+      break;
+  }
+  delay(80);
+  digitalWrite(setHC, 1); // enter transparent mode
+  String input1 = Serial2.readString();
+  Serial.println(input1);
+  delay(40);
+}
+
+
+void iport_s() {
+
+  delay(40);
+  digitalWrite(setHC, 0); // enter AT command mode
+  delay(80);
+
+  switch (mas_send_channel) {
+    case 0:
+      Serial2.print(F("AT+C005")); // set to channel 5
+      break;
+    case 1:
+      Serial2.print(F("AT+C010")); // set to channel 10
+      break;
+    case 2:
+      Serial2.print(F("AT+C020")); // set to channel 20
+      break;
+    case 3:
+      Serial2.print(F("AT+C030")); // set to channel 30
+      break;
+    case 4:
+      Serial2.print(F("AT+C035")); // set to channel 30
+      break;
+    case 5:
+      Serial2.print(F("AT+C040")); // set to channel 30
+      break;
+    case 6:
+      Serial2.print(F("AT+C045")); // set to channel 30
+      break;
+    case 7:
+      Serial2.print(F("AT+C050")); // set to channel 30
+      break;
+    case 8:
+      Serial2.print(F("AT+C055")); // set to channel 30
+      break;
+    case 9:
+      Serial2.print(F("AT+C060")); // set to channel 30
+      break;
+    case 10:
+      Serial2.print(F("AT+C065")); // set to channel 30
+      break;
+    case 11:
+      Serial2.print(F("AT+C070")); // set to channel 30
+      break;
+    case 12:
+      Serial2.print(F("AT+C075")); // set to channel 30
+      break;
+    case 13:
+      Serial2.print(F("AT+C080")); // set to channel 30
+      break;
+    case 14:
+      Serial2.print(F("AT+C085")); // set to channel 30
+      break;
+    case 15:
+      Serial2.print(F("AT+C090")); // set to channel 30
+      break;
+    case 16:
+      Serial2.print(F("AT+C095")); // set to channel 30
+      break;
+    case 17:
+      Serial2.print(F("AT+C0100")); // set to channel 30
+      break;
+  }
+  
+  delay(80);
+  digitalWrite(setHC, 1); // enter transparent mode
+  String input1 = Serial2.readString();
+  Serial.println(input1);
+  delay(40);
+}
+
+
+//------------------------mesh setup--------------------------------
+
+String meshssid = "GAP";          //  Mesh name
+String meshpassword = "12345678";     //  Mesh Password
+int16_t meshport = 1134;         //  Mesh Port
+
+void sendMessage() ; // Prototype so PlatformIO doesn't complain
+void showNodeList();
+void receivedCallback(uint32_t from, String & msg);
+void droppedConnectionCallback(uint32_t nodeId);
+void changedConnectionCallback();
+void nodeTimeAdjustedCallback(int32_t offset);
+void delayReceivedCallback(uint32_t from, int32_t delay);
+
+Task taskSendMessage( TASK_SECOND * 5 , TASK_FOREVER, &sendMessage );
+
+void sendMessage() {} ;
+
+
+//------------------------------------------ Storage Setup and Start -----------------------------------------------------
+void resetEeprom() {
+  for (int eepromAddress = 0; eepromAddress < 500; eepromAddress++) {
+    EEPROM.write(eepromAddress, 0);
+  }
+  EEPROM.commit();
+  return;
+}
+
+void initializeStorage() {
+  // Initializing EEPROM
+  //EEPROM.begin(500);
+  Serial.println("Initialized EEPROM.");
+
+  // --------------  EEPROM Memory Items ----------------
+  Serial.println("");
+
+  EEPROM.get(autobright_mem_pos, brightness);
+  if (brightness <= 0 || brightness >= 4) {
+    brightness = 4;
+  }
+  brightness_mem = brightness;
+  Serial.print("Brightness is = ");
+  Serial.println(brightness);
+  //setBrightness(brightness);
+  //brightcmd = brightness;
+
+    EEPROM.get(digitpos_mem_pos, digitpos);
+    if (digitpos < 0 || digitpos >= 37) {
+      digitpos = 0;
+    }
+    digitpos_mem = digitpos;
+    Serial.print("Digit Position is = ");
+    Serial.println(digitpos);
+
+  EEPROM.get(sensormode_mem_pos, sensormode);
+  if (sensormode < 0 || sensormode >= 2) {
+    sensormode = 0;
+  }
+  sensormode_mem = sensormode;
+  Serial.print("sensormode Off=0,sensormode On=1 - ");
+  Serial.println(sensormode);
+
+  EEPROM.get(fontstyle_mem_pos, fontstyle);
+  if (fontstyle < 0 || fontstyle >= 7) {
+    fontstyle = 0;
+  }
+  fontstyle_mem = fontstyle;
+  Serial.print("Font Style is = ");
+  Serial.println(fontstyle);
+
+  EEPROM.get(autobright_mem_pos, autobright);
+  if (autobright < 0 || autobright >= 2) {
+    autobright = 1;
+  }
+  autobright_mem = autobright;
+  Serial.print("autobright 0=off 1=on - ");
+  if (autobright == 1) {
+    autobright = true;
+  } else {
+    autobright = false;
+  }
+  Serial.println(autobright);
+
+  if (transAddress == 3) {
+    sensormode = 1;
+    autobright = 1;
+  
+
+  Serial.print("Last Digits - ");
+  for (int i = 0; i < 36; i++) {
+    EEPROM.get(i, digitval[i]);
+    if (digitval[i] == 255) {
+      digitval[i] = 0;
+    }
+    digitval_mem[i] = digitval[i];
+    Serial.print(digitval[i]);
+    Serial.print(",");
+  }
+  }
+  //---------------------------- Reading from memory for secondary also
+  Serial.print("Last Digits - ");
+  for (int i = 0; i < 48; i++) {
+    EEPROM.get(i, digitval[i]);
+    if (digitval[i] == 255) {
+      digitval[i] = 0;
+    }
+    digitval_mem[i] = digitval[i];
+    Serial.print(digitval[i]);
+    Serial.print(",");
+  }
+  //------------------------------------------------------------
+  Serial.println("");
+
+  for (int i = 0; i < 19; ++i)
+  {
+    if (EEPROM.read(100 + i) == 255) break; //break when end of sting is reached before maxLength
+    essid[i] = char(EEPROM.read(100 + i));
+    Serial.println(byte(essid[i]));
+    yield();
+  }
+  if (byte(essid[0]) != 0) {
+    Serial.println("Converting SSID");
+    meshssid = String(essid);
+    delay(10);
+  }
+  Serial.print(F("MeshSSID is = "));
+  Serial.println(meshssid);
+
+  for (int i = 0; i < 19; ++i)
+  {
+    if (EEPROM.read(120 + i) == 255) break; //break when end of sting is reached before maxLength
+    epass[i] = char(EEPROM.read(120 + i));
+    Serial.println(byte(epass[i]));
+    yield();
+  }
+  if (byte(epass[1]) != 0) {
+    Serial.println("Converting PASSWORD");
+    meshpassword = String(epass);
+    delay(10);
+  }
+  Serial.print(F("MeshPASSWORD is = "));
+  Serial.println(meshpassword);
+
+
+  Serial.print(F("MeshPORT is = "));
+  Serial.println(meshport);
+  delay(100);
+
+
+}
+
+//--------------------------Digit Fuctions----------------------------------------------
+
+//void setBrightness(byte brightness)// 0 to 1023
+//{
+//  if (brightness == 0) {
+//    analogWrite(outputEnablePin, 1023);
+//    Serial.println("Got 0 BRIGHTNES");
+//  } else {
+//    //---- maxbrightness 1-9 -----
+//    fmaxbrightness = (9 - maxbrightness) * 80;
+//    //-----  fmaxbrightness 9 = 0, 1 = 420 -----
+//    Serial.print("fmaxbrightness = ");
+//    Serial.println(fmaxbrightness);
+//    newbrightness = (1020 - (((1020 - fmaxbrightness) / 5) * brightness)); //----- 34 levels of Brightness x 30 = 1020 ---  1023=OFF
+//    Serial.print("1st new brightness = ");
+//    Serial.println(newbrightness);
+//    if (newbrightness <= 29) {
+//      newbrightness = 0;
+//    }
+//    if (newbrightness >= 1023) {
+//      newbrightness = 1023;
+//    }
+//    Serial.print("new brightness = ");
+//    Serial.println(newbrightness);
+//    analogWrite(outputEnablePin, newbrightness);
+//  }
+//}
+
+void setcashbri(byte brightness)
+{
+  //Serial.print("setcashbri ");
+  //Serial.println(brightness);
+  ledcWrite(ledChannel_0, brightness);
+}
+
+void setdebitbri(byte brightness)
+{
+  Serial.print("setcdebitbri ");
+  Serial.println(brightness);
+   ledcWrite(ledChannel_1, brightness);
+}
+
+
+void setcreditbri(byte brightness)
+{
+  Serial.print("setcreditbri ");
+  Serial.println(brightness);
+   ledcWrite(ledChannel_2, brightness);
+}
+
+
+void setBrightness(int brightness)// 0 to 255
+{
+  if(pumptopper_pcb == false)
+  {
+    Serial.println("brightupdate 12inch");
+    ledcWrite(ledChannel_3, brightnessmap[brightness]);
+  }
+  else
+  {
+    if (brightness != 0)
+    {
+      
+       Serial.println(brightness);
+      ledcWrite(ledChannel_4, ((brightnessmap[brightness])));
+      Serial.println("brightupdate pumptopper");
+      Serial.println((brightnessmap[brightness]));
+    }
+    else
+    {
+      //analogWrite(outputEnablePin, 255 - 240);
+      sleep_mode = true;
+      delay(50);
+      foo = 1;  //temporary FLASHER OFF
+      cashdebitcredit = 0;
+      digitalWrite(latchPin, 0);
+      delay(10);
+      for (int i = 0; i < 48; i++)
+      {
+        shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[21]);
+      }
+      delay(10);
+      digitalWrite(latchPin, 1);
+      Serial.println(" BRIGHT ZERO Sleep mode activate  ----- ");
+      delay(50);
+      // TURN OF CDC 
+      setcreditbri(brightnessmap2[brightcmd]);
+      setcashbri(brightnessmap2[brightcmd]);
+      setdebitbri(brightnessmap2[brightcmd]);
+      
+    }
+    if ((last_brightness == 0) && (brightness > 0))
+    {
+      sleep_mode = false;
+      if (transAddress == 3) {
+        delay(100);
+        foo=readFile(SPIFFS, "/foo.txt").toInt();
+      }
+      updateShiftRegister();
+      //delay(5);
+      timerv5.restart();
+      Serial.println(" BRIGHT Sleep mode off");
+    }
+    last_brightness = brightness;
+  }
+}
+
+
+
+
+
+
+//------------------------------------------MESH Receive SETUP-----------------------------------------------------------------
+
+void changedConnectionCallback() {
+  Serial.println("Connected Node Count: " + String(mesh.getNodeList().size()));
+  if (String(mesh.getNodeList().size()) ==  "0" ) {
+    Serial.println(F("Connection Problem"));
+    previous_restart_Millis = millis();
+    restartit = true;
+    ESP.restart();
+  } else {
+    Serial.println(F("Connection GOOD"));
+    restartit = false;
+    if (sensormode == 1) {
+      //      mem();   //  Used for WIFI RESEND DATA
+    }
+  }
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.println("Connected Node Count: " + String(mesh.getNodeList().size()));
+  if (sensormode == 1) {
+    //    mem();    //  Used for WIFI RESEND DATA
+  }
+}
+
+void nodeTimeAdjustedCallback(int32_t offset) {
+  Serial.println("Connected Node Count: " + String(mesh.getNodeList().size()));
+}
+
+void delayReceivedCallback(uint32_t from, int32_t delay) {
+  Serial.println("Connected Node Count: " + String(mesh.getNodeList().size()));
+}
+
+void droppedConnectionCallback(uint32_t nodeId) {
+}
+
+String getStringPartByNr(String data, char separator, int index)
+{
+  // spliting a string and return the part nr index split by separator
+  int stringData = 0;        //variable to count data part nr
+  String dataPart = "";      //variable to hole the return text
+  for (uint8_t i = 0; i < data.length() - 1; i++) { //Walk through the text one letter at a time
+    if (data[i] == separator) {
+      //Count the number of times separator character appears in the text
+      stringData++;
+    } else if (stringData == index) { //get the text when separator is the rignt one
+      dataPart.concat(data[i]);                                      //strcat(result, &data[i]); better for embedded...
+    } else if (stringData >= index) { //return text and stop if the next separator appears - to save CPU-time
+      return dataPart;
+      break;
+    }
+    yield();
+  }
+  return dataPart; //return text if this is the last part
+}
+
+String getStringPartByNr_price(String data, char separator, int index) {
+    int stringData = 0;        
+    String dataPart = "";      
+
+    for (uint8_t i = 0; i < data.length(); i++) {
+        if (data[i] == separator) {
+            stringData++;
+            if (stringData == index) {
+                i++;  // Skip the separator
+                while (i < data.length() && data[i] != separator) {
+                    dataPart += data[i];
+                    i++;
+                }
+                return dataPart;
+            }
+        }
+    }
+    return dataPart;
+}
+// callback when data is sent from Master to Slave
+void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+  Serial.print("Last Packet Sent to: "); Serial.println(macStr);
+  Serial.print("Last Packet Send Status: "); 
+ // transfer_try = transfer_try+1;
+  if (status == ESP_NOW_SEND_SUCCESS) {
+  Serial.println("Delivery Success");
+ // transfer_success = transfer_success+1;
+} else {
+  Serial.println("Delivery Fail");
+  Delivery_fail = true;
+
+}
+//Serial.print(transfer_try);
+//Serial.print("  success  ");
+//Serial.println(transfer_success);
+}
+//------------------------------------------- If we Recieve anything, USE IT HERE ---------------------------
+
+// callback when data is recv from Master
+void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingdata, int data_len) {
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02x:%02x:%02x:%02x:%02x:%02x",
+           mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+  Serial.print("Last Packet Recv from: "); Serial.println(macStr);
+  // Assuming the data received contains the structure directly
+  // If it's just a pointer to the structure, you'll need to memcpy it.
+  memcpy(&myData, incomingdata, sizeof(myData));
+  
+  Serial.print("Last Packet Recv Data: "); 
+  Serial.print("a: "); Serial.println(myData.a);
+  Serial.print("b: "); Serial.println(myData.b);
+  Serial.print("c: "); Serial.println(myData.c);
+  Serial.print("d: "); Serial.println(myData.d);
+
+  Serial.print("Last Packet Recv Data: "); Serial.println(*incomingdata);
+  Serial.println("");
+
+  char word[32]; // Assuming a maximum length for the word
+  memset(word, 0, sizeof(word)); // Clear the word array
+
+  // Loop to copy characters into the word array until the first comma is encountered
+  for (byte i = 0; myData.a[i] != '\0'; i++) {
+      if (myData.a[i] == ',') {
+          break; // Exit the loop if a comma is encountered
+      }
+      word[i] = myData.a[i]; // Copy the character into the word array
+  }
+  msg1 = String(myData.a);
+  New_ESP_NOW_DATA_Recieve = true;
+}
+
+
+void sendData() {
+  for (int i = 0; i < SlaveCnt; i++) {
+    const uint8_t *peer_addr = Temp_slaves[i].peer_addr;
+    if (i == 0) { // print only for first slave
+      Serial.print("Sending: ");
+      //Serial.println(myData);
+    }
+    esp_err_t result = esp_now_send(peer_addr, (uint8_t *) &myData, sizeof(myData));
+    Serial.print("Send Status: ");
+    if (result == ESP_OK) {
+      Serial.println("Success");
+    } else if (result == ESP_ERR_ESPNOW_NOT_INIT) {
+      // How did we get so far!!
+      Serial.println("ESPNOW not Init.");
+    } else if (result == ESP_ERR_ESPNOW_ARG) {
+      Serial.println("Invalid Argument");
+    } else if (result == ESP_ERR_ESPNOW_INTERNAL) {
+      Serial.println("Internal Error");
+    } else if (result == ESP_ERR_ESPNOW_NO_MEM) {
+      Serial.println("ESP_ERR_ESPNOW_NO_MEM");
+    } else if (result == ESP_ERR_ESPNOW_NOT_FOUND) {
+      Serial.println("Peer not found.");
+    } else {
+      Serial.println("Not sure what happened");
+    }
+    delay(100);
+  }
+}
+
+void esp_now_price_send()
+{
+  char sync1[110]; // Assuming a maximum length for the string
+    memset(sync1, 0, sizeof(sync1)); // Clear the character array
+
+    // Concatenate the values of digitval separated by commas into sync1
+    for (int i = 0; i < 48; i++) {
+      if (i > 0) {
+        strcat(sync1, ","); // Add comma separator except for the first value
+      }
+      char temp[10]; // Temporary buffer for formatting each integer value
+      sprintf(temp, "%d", digitval[i]); // Convert digitval[i] to string
+      strcat(sync1, temp); // Concatenate the formatted string to sync1
+    }
+    strcat(sync1, ","); // Add comma separator except for the first value
+    Serial.println(sync1);
+    const char PRICE[] = "PRICE,";
+    
+    strcpy(myDataA, PRICE);
+    strcat(myDataA, sync1);
+    // Assign myDataA to myData.a
+    strcpy(myData.a, myDataA);
+    Serial.println(myData.a);
+    myData.d = true;
+    sendData();
+}
+
+
+void ESP_Now_receive()
+{
+  //Serial.println("Recieve checking ");
+  
+  for (byte i = 0; i < 110; i++) {
+    //      for (int i = 0; i < msg1.length() - 1; i++) {
+
+    //-----------------------------------------------For digit information Recieving -------------------------------
+
+
+    //    String pass = getStringPartByNr(msg1, ',', i);
+    //    // look for "01" / "02" / "03"
+    //    for (int j = 0; j < 45; j++) {
+    //      if (pass == digits[j]) {
+    //        Serial.println(" GOT digits = " + String(digits[j]));
+    //        digitval[j] = (getStringPartByNr(msg1, ',', i + 1)).toInt(); //  Goes to the next idx position and saves it to Digitval
+    //
+    //        if (digitval[j] != glob0[j]) {
+    //
+    //          EEPROM.put(j, digitval[j]);
+    //          EEPROM.commit();
+    //          Serial.println("Digit into mem");
+    //
+    //          for (int p = 0; p <= digitcount; p++) {
+    //            if (j == digitpos + p) {
+    //              updateShiftRegister();
+    //              glob0[j] = digitval[j];
+    //              Serial.println("UPDATING NOW");
+    //            }
+    //          }
+    //
+    //          if (masterslave == 1 && DRRB == 0) {
+    //            String sync;
+    //            sync += digits[j] + "," + String(digitval[j]) + ",";
+    //            Serial.println(sync);
+    //            mesh.sendBroadcast(sync);
+    //            taskSendMessage.setInterval( random( TASK_SECOND * 1, TASK_SECOND * 5 ));
+    //          }
+    //
+    //          glob0[j] = digitval[j];
+    //        }
+    //        Serial.println(digitval[j]);
+    //      }
+    //      yield();
+    //    }
+
+
+    //    String pass = getStringPartByNr(msg1, ',', i);
+    //
+    //    // look for "D01" / "D02" / "D03"
+    //    for (int j = 0; j < 36; j++) {
+    //      if (pass == digits[j]) {
+    //        delay(0);
+    //        //        Serial.print("GOT digits - " + String(digits[j]) + " = ");
+    //        digitval[j] = (getStringPartByNr(msg1, ',', i + 1)).toInt(); //  Goes to the next idx position and saves it to Digitval
+    //        if (digitval[j] != digitval_mem[j]) {
+    //          digitval_mem[j] = digitval[j];
+    //          EEPROM.put(j, digitval[j]);
+    //          EEPROM.commit();
+    //          Serial.print(F("DigitVal into MEM "));
+    //          Serial.println(digitval[j]);
+    //          if (digitpos == j || digitpos + 1 == j || digitpos + 2 == j) {
+    ////            gotnewdigit = true;
+    //            Serial.print(F("Got New Digits "));
+    //          }
+    //        }
+    //        Serial.println(digitval[j]);
+    //      }
+    //
+    //    }
+    //    if (i == 109) {
+    //      if (gotnewdigit == true) {
+    //        Serial.print(F("UPDATING \n"));
+    //        backgroundLayer.fillScreen({0, 0, 0});
+    //        backgroundLayer.swapBuffers();
+    //        gotnewdigit = false;
+    //      }
+    //      if (sensormode == 1) {
+    //        senddatapack();
+    //      }
+    //      i++;
+    //    }
+    
+
+    if ((getStringPartByNr(msg1, ',', i) == "PRICE")) { //---------------  looking for [DIGITPOSITION]  then  [0-30]-----------
+      Serial.println(F("got new PRICE = "));
+      String substringToRemove = "PRICE,";
+
+    // Find the position of the substring in the main string
+      int pos = msg1.indexOf(substringToRemove);
+
+      // Check if the substring exists in the main string
+      if (pos != -1) {
+          // Remove the substring from the main string
+          msg1.remove(pos, substringToRemove.length());
+          
+          //Serial.println("After removing substring: " + msg1);
+      } 
+    
+      byte count = 0; // Counter for the number of extracted values
+      // Split the string by comma and extract values
+      int startPos = 0;
+      for (int i = 0; i < msg1.length(); i++) {
+          if (msg1.charAt(i) == ',') {
+              String value = msg1.substring(startPos, i);
+              digitval[count++] = value.toInt();
+              startPos = i + 1;
+              
+          }
+      }
+      // Extract the last value after the last comma
+      //String value = msg1.substring(startPos);
+      //digitval[count++] = value.toInt();
+
+      // Print the extracted values
+      for (byte k = 0; k < count; k++) {
+        if (digitval[k] != digitval_mem[k]) {
+            digitval_mem[k] = digitval[k];
+            //updateShiftRegister();
+            //if (sensormode == 1) 
+            {
+              EEPROM.put(k, digitval[k]);
+              EEPROM.commit();
+              Serial.print(F("DigitVal into MEM "));
+              
+            }
+            
+            Serial.println(digitval[k]);
+        }
+      }
+      updateShiftRegister();
+      //esp_now_price_send();
+
+    }
+    // ---------------------------- MAC ADDRESS --------------------------------------------//
+    if ((getStringPartByNr(msg1, ',', i) == "MAC")) { //---------------  looking for [DIGITPOSITION]  then  [0-30]-----------
+      Serial.println(F("goT MAC ADDRESS = "));
+      String substringToRemove = "MAC,";
+
+    // Find the position of the substring in the main string
+      int pos = msg1.indexOf(substringToRemove);
+
+      // Check if the substring exists in the main string
+      if (pos != -1) {
+          // Remove the substring from the main string
+          msg1.remove(pos, substringToRemove.length());
+          
+          //Serial.println("After removing substring: " + msg1);
+      } 
+      //strcpy(Permanent_Slaves, msg1.c_str());
+      Permanent_num_paired = myData.b;
+      Serial.print("  Permanent_num_paired");Serial.println(  Permanent_num_paired);
+      writeFile(SPIFFS, "/Permanent_Slaves.txt", msg1.c_str());
+      String inputMessage6 = String(Permanent_num_paired);
+      writeFile(SPIFFS, "/Permanent_num_paired.txt", inputMessage6.c_str());
+      Serial.print("  Permanent_Slaves");Serial.println(  Permanent_Slaves);
+      one_time_init = false;  //start pairing
+
+      
+    }
+    //-----------------------------  For Brightness,  Looks for 70 then the next 2 number as Value for Brightness ---------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "BRIGHTNESS")) {    //---------------  looking for [BR]  then [0-9]-----------
+      Serial.print(F("got Brightness = "));
+      brightness = (getStringPartByNr(msg1, ',', i + 1)).toInt();
+      if (brightness != brightness_mem) {
+        brightness_mem = brightness;
+        EEPROM.put(brightness_mem_pos, brightness);
+        EEPROM.commit();
+        Serial.print(F("got New Brightness into MEM = "));
+        setBrightness(brightness);
+      }
+      Serial.println(brightness);
+      setBrightness(brightness);
+    }
+
+    //-----------------------------  For  Auto Brightness on and off ---------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "AUTOBRIGHTNESS")) {    //---------------  looking for [AUTOBRIGHTNESS]  then [0-1]-----------
+      Serial.println(F("got Auto Brightness = "));
+      autobright = (getStringPartByNr(msg1, ',', i + 1)).toInt();
+      if (autobright != autobright_mem) {
+        autobright_mem = autobright;
+        EEPROM.put(autobright_mem_pos, autobright);
+        EEPROM.commit();
+        Serial.print(F("AutoBrightness into mem = "));
+      }
+      Serial.println(autobright);
+    }
+
+    //-----------------------------  For Digit POSITION Setting 0 - 72------------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "DIGITPOSITION")) { //---------------  looking for [DIGITPOSITION]  then  [0-30]-----------
+      Serial.println(F("got new Digit POSITION = "));
+      digitpos = (getStringPartByNr(msg1, ',', i + 1)).toInt();
+      if (digitpos != digitpos_mem) {
+        digitpos_mem = digitpos;
+        if (digitpos <= 0) {                                         //  -- or 1-0, 2-4, 3-8, 4-12
+          digitpos = 0;
+        }
+        EEPROM.put(digitpos_mem_pos, digitpos);
+        EEPROM.commit();
+        Serial.print(F("Digit Position into MEM = "));
+      }
+      Serial.println(digitpos);
+    }
+
+    //-----------------------------  For Digit SET SENSORMODE DIGIT-----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "SENSORMODE")) { //---------------  looking for [MASTERSLAVE]  then 0=off [1-2]-----------{master-slave]
+      Serial.println(F("got 0-SNESORMODE=OFF, 1-SNESORMODE=ON"));
+      sensormode = (getStringPartByNr(msg1, ',', i + 1)).toInt();
+      if (sensormode != sensormode_mem) {
+        sensormode_mem = sensormode;
+        EEPROM.put(sensormode_mem_pos, sensormode);
+        EEPROM.commit();
+        Serial.print(F("SNESORMODE into MEM = "));
+      }
+      Serial.println(sensormode);
+    }
+
+    //-----------------------------  For Digit to FLASH at CURRENT Position-----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "FLASH")) { //---------------  looking for [84][0-45]-----------
+      Serial.println(F("got new FLASH"));
+      setBrightness(0);
+      Serial.println(F("Got Flash"));
+      delay(4000);
+      setBrightness(brightness);
+    }
+
+    //-----------------------------  For Digit FONT Style -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "FONT")) { //---------------  looking for [86]  then  [0-3]-----------
+      Serial.println(F("got new Digit FONT Style"));
+      fontstyle = (getStringPartByNr(msg1, ',', i + 1)).toInt();
+      if (fontstyle != fontstyle_mem) {
+        fontstyle_mem = fontstyle;
+        EEPROM.put(fontstyle_mem_pos, fontstyle);
+        EEPROM.commit();
+        Serial.print(F("FONT Style into MEM = "));
+      }
+      Serial.println(fontstyle);
+    }
+
+    //-----------------------------  For Reseting Sign MEMORY -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "RESETMEMORY")) { //---------------  looking for [RESET] -----------
+      Serial.println(F("got RESET MEMORY"));
+      resetEeprom();
+      previous_restart_Millis = millis();
+      restartit = true;
+    }
+
+    //-----------------------------  For Reseting Sign System -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg1, ',', i) == "RESETALL")) { //---------------  looking for [RESET] -----------
+      Serial.println(F("got RESET ALL"));
+      previous_restart_Millis = millis();
+      restartit = true;
+    }
+
+    //-----------------------------  For MESHSSID Name -----------------------------------------------------------------
+
+    //  if ((getStringPartByNr(msg1, ',', i) == "SETSSID")) { //---------------  looking for [SETSSID]  then  [NEW SSID]-----------
+    //    Serial.println(F("got new Mesh SSID"));
+    //    meshssid = getStringPartByNr(msg1, ',', i + 1).c_str();
+    //    meshssid = meshssid + '\0';
+    //
+    //    if (meshssid != Sessid) {
+    //      Sessid = meshssid;
+    //      EEPROM.begin(512);
+    //      delay(10);
+    //      for (int i = 0; i < 19); ++i)
+    //      {
+    //        if (meshssid[i] == '\0') break;
+    //        EEPROM.write(100 + i, meshssid[i]);
+    //        Serial.print("Wrote: ");
+    //        Serial.println(meshssid[i]);
+    //      }
+    //      EEPROM.commit();
+    //      EEPROM.end();
+    //      Serial.println("got SSID update");
+    //      Serial.println(meshssid);
+    //
+    //    }
+    //  }
+
+
+    //-----------------------------  For MESHPASSWORD Name -----------------------------------------------------------------
+
+    //  if ((getStringPartByNr(msg1, ',', i) == "SETPASSWORD")) { //---------------  looking for [SETPASSWORD]  then  [NEW PASSWORD]-----------
+    //    Serial.println(F("got new Mesh PASSWORD"));
+    //    meshpassword = (getStringPartByNr(msg1, ',', i + 1)).c_str();
+    //    meshpassword = meshpassword + '\0';
+    //
+    //    if (meshpassword != Sepass) {
+    //      Sepass = meshpassword;
+    //      EEPROM.begin(512);
+    //      delay(10);
+    //      for (int i = 0; i < 19; ++i)
+    //      {
+    //        if (meshpassword[i] == '\0') break;
+    //        EEPROM.write(120 + i, meshpassword[i]);
+    //        Serial.print("Wrote: ");
+    //        Serial.println(meshpassword[i]);
+    //      }
+    //      EEPROM.commit();
+    //      EEPROM.end();
+    //      Serial.println("got PASS update");
+    //      Serial.println(meshpassword);
+    //    }
+    //  }
+
+  }
+
+}
+
+void manageSlave() {
+  //SlaveCnt = Permanent_num_paired;
+  if (SlaveCnt > 0) {
+    for (int i = 0; i < SlaveCnt; i++) {
+      const esp_now_peer_info_t *peer = &Temp_slaves[i];
+      const uint8_t *peer_addr = Temp_slaves[i].peer_addr;
+      Serial.print("Processing: ");
+      for (int ii = 0; ii < 6; ++ii ) {
+        Serial.print((uint8_t) Temp_slaves[i].peer_addr[ii], HEX);
+        if (ii != 5) Serial.print(":");
+      }
+      Serial.print(" Status: ");
+      // check if the peer exists
+      bool exists = esp_now_is_peer_exist(peer_addr);
+      if (exists) {
+        // Slave already paired.
+        Serial.println("Already Paired");
+      } else {
+        // Slave not paired, attempt pair
+        esp_err_t addStatus = esp_now_add_peer(peer);
+        if (addStatus == ESP_OK) {
+          // Pair success
+          Serial.println("Pair success");
+        } else if (addStatus == ESP_ERR_ESPNOW_NOT_INIT) {
+          // How did we get so far!!
+          Serial.println("ESPNOW Not Init");
+        } else if (addStatus == ESP_ERR_ESPNOW_ARG) {
+          Serial.println("Add Peer - Invalid Argument");
+        } else if (addStatus == ESP_ERR_ESPNOW_FULL) {
+          Serial.println("Peer list full");
+        } else if (addStatus == ESP_ERR_ESPNOW_NO_MEM) {
+          Serial.println("Out of memory");
+        } else if (addStatus == ESP_ERR_ESPNOW_EXIST) {
+          Serial.println("Peer Exists");
+        } else {
+          Serial.println("Not sure what happened");
+        }
+        delay(100);
+      }
+    }
+  } else {
+    // No slave found to process
+    Serial.println("No Slave found to process");
+  }
+}
+
+void pair_saved_MAC()
+{
+  // Convert MAC addresses in Permanent_paired_Slaves to byte format
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            sscanf(Permanent_paired_Slaves[i].c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", 
+                  &Permanent_paired_Slaves_bytes[i][0], &Permanent_paired_Slaves_bytes[i][1],
+                  &Permanent_paired_Slaves_bytes[i][2], &Permanent_paired_Slaves_bytes[i][3],
+                  &Permanent_paired_Slaves_bytes[i][4], &Permanent_paired_Slaves_bytes[i][5]);
+        }
+
+        // Assign byte format MAC addresses to Temp_slaves
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            memcpy(Temp_slaves[i].peer_addr, Permanent_paired_Slaves_bytes[i], 6);
+        }
+
+        // Assign MAC addresses to scan_nodeId_array
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            uint64_t macAddress = 0;
+            uint8_t *macBytes = Temp_slaves[i].peer_addr;
+            for (int j = 0; j < 6; ++j) {
+                macAddress = (macAddress << 8) | macBytes[j];
+            }
+            //scan_nodeId_array[i] = macAddress;
+        }
+        SlaveCnt = Permanent_num_paired;
+        manageSlave();
+        
+}
+void receivedCallback( uint32_t from, String &msg) {
+  Serial.printf("Received from %u msg=%s\n", from, msg.c_str());
+
+  for (byte i = 0; i < 110; i++) {
+    //      for (int i = 0; i < msg.length() - 1; i++) {
+
+    //-----------------------------------------------For digit information Recieving -------------------------------
+
+
+    //    String pass = getStringPartByNr(msg, ',', i);
+    //    // look for "01" / "02" / "03"
+    //    for (int j = 0; j < 45; j++) {
+    //      if (pass == digits[j]) {
+    //        Serial.println(" GOT digits = " + String(digits[j]));
+    //        digitval[j] = (getStringPartByNr(msg, ',', i + 1)).toInt(); //  Goes to the next idx position and saves it to Digitval
+    //
+    //        if (digitval[j] != glob0[j]) {
+    //
+    //          EEPROM.put(j, digitval[j]);
+    //          EEPROM.commit();
+    //          Serial.println("Digit into mem");
+    //
+    //          for (int p = 0; p <= digitcount; p++) {
+    //            if (j == digitpos + p) {
+    //              updateShiftRegister();
+    //              glob0[j] = digitval[j];
+    //              Serial.println("UPDATING NOW");
+    //            }
+    //          }
+    //
+    //          if (masterslave == 1 && DRRB == 0) {
+    //            String sync;
+    //            sync += digits[j] + "," + String(digitval[j]) + ",";
+    //            Serial.println(sync);
+    //            mesh.sendBroadcast(sync);
+    //            taskSendMessage.setInterval( random( TASK_SECOND * 1, TASK_SECOND * 5 ));
+    //          }
+    //
+    //          glob0[j] = digitval[j];
+    //        }
+    //        Serial.println(digitval[j]);
+    //      }
+    //      yield();
+    //    }
+
+
+    //    String pass = getStringPartByNr(msg, ',', i);
+    //
+    //    // look for "D01" / "D02" / "D03"
+    //    for (int j = 0; j < 36; j++) {
+    //      if (pass == digits[j]) {
+    //        delay(0);
+    //        //        Serial.print("GOT digits - " + String(digits[j]) + " = ");
+    //        digitval[j] = (getStringPartByNr(msg, ',', i + 1)).toInt(); //  Goes to the next idx position and saves it to Digitval
+    //        if (digitval[j] != digitval_mem[j]) {
+    //          digitval_mem[j] = digitval[j];
+    //          EEPROM.put(j, digitval[j]);
+    //          EEPROM.commit();
+    //          Serial.print(F("DigitVal into MEM "));
+    //          Serial.println(digitval[j]);
+    //          if (digitpos == j || digitpos + 1 == j || digitpos + 2 == j) {
+    ////            gotnewdigit = true;
+    //            Serial.print(F("Got New Digits "));
+    //          }
+    //        }
+    //        Serial.println(digitval[j]);
+    //      }
+    //
+    //    }
+    //    if (i == 109) {
+    //      if (gotnewdigit == true) {
+    //        Serial.print(F("UPDATING \n"));
+    //        backgroundLayer.fillScreen({0, 0, 0});
+    //        backgroundLayer.swapBuffers();
+    //        gotnewdigit = false;
+    //      }
+    //      if (sensormode == 1) {
+    //        senddatapack();
+    //      }
+    //      i++;
+    //    }
+
+
+    //-----------------------------  For Brightness,  Looks for 70 then the next 2 number as Value for Brightness ---------------
+
+    if ((getStringPartByNr(msg, ',', i) == "BRIGHTNESS")) {    //---------------  looking for [BR]  then [0-9]-----------
+      Serial.print(F("got Brightness = "));
+      brightness = (getStringPartByNr(msg, ',', i + 1)).toInt();
+      if (brightness != brightness_mem) {
+        brightness_mem = brightness;
+        EEPROM.put(brightness_mem_pos, brightness);
+        EEPROM.commit();
+        Serial.print(F("got New Brightness into MEM = "));
+        setBrightness(brightness);
+      }
+      Serial.println(brightness);
+      setBrightness(brightness);
+    }
+
+    //-----------------------------  For  Auto Brightness on and off ---------------
+
+    if ((getStringPartByNr(msg, ',', i) == "AUTOBRIGHTNESS")) {    //---------------  looking for [AUTOBRIGHTNESS]  then [0-1]-----------
+      Serial.println(F("got Auto Brightness = "));
+      autobright = (getStringPartByNr(msg, ',', i + 1)).toInt();
+      if (autobright != autobright_mem) {
+        autobright_mem = autobright;
+        EEPROM.put(autobright_mem_pos, autobright);
+        EEPROM.commit();
+        Serial.print(F("AutoBrightness into mem = "));
+      }
+      Serial.println(autobright);
+    }
+
+    //-----------------------------  For Digit POSITION Setting 0 - 72------------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "DIGITPOSITION")) { //---------------  looking for [DIGITPOSITION]  then  [0-30]-----------
+      Serial.println(F("got new Digit POSITION = "));
+      digitpos = (getStringPartByNr(msg, ',', i + 1)).toInt();
+      if (digitpos != digitpos_mem) {
+        digitpos_mem = digitpos;
+        if (digitpos <= 0) {                                         //  -- or 1-0, 2-4, 3-8, 4-12
+          digitpos = 0;
+        }
+        EEPROM.put(digitpos_mem_pos, digitpos);
+        EEPROM.commit();
+        Serial.print(F("Digit Position into MEM = "));
+      }
+      Serial.println(digitpos);
+    }
+
+    //-----------------------------  For Digit SET SENSORMODE DIGIT-----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "SENSORMODE")) { //---------------  looking for [MASTERSLAVE]  then 0=off [1-2]-----------{master-slave]
+      Serial.println(F("got 0-SNESORMODE=OFF, 1-SNESORMODE=ON"));
+      sensormode = (getStringPartByNr(msg, ',', i + 1)).toInt();
+      if (sensormode != sensormode_mem) {
+        sensormode_mem = sensormode;
+        EEPROM.put(sensormode_mem_pos, sensormode);
+        EEPROM.commit();
+        Serial.print(F("SNESORMODE into MEM = "));
+      }
+      Serial.println(sensormode);
+    }
+
+    //-----------------------------  For Digit to FLASH at CURRENT Position-----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "FLASH")) { //---------------  looking for [84][0-45]-----------
+      Serial.println(F("got new FLASH"));
+      setBrightness(0);
+      Serial.println(F("Got Flash"));
+      delay(4000);
+      setBrightness(brightness);
+    }
+
+    //-----------------------------  For Digit FONT Style -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "FONT")) { //---------------  looking for [86]  then  [0-3]-----------
+      Serial.println(F("got new Digit FONT Style"));
+      fontstyle = (getStringPartByNr(msg, ',', i + 1)).toInt();
+      if (fontstyle != fontstyle_mem) {
+        fontstyle_mem = fontstyle;
+        EEPROM.put(fontstyle_mem_pos, fontstyle);
+        EEPROM.commit();
+        Serial.print(F("FONT Style into MEM = "));
+      }
+      Serial.println(fontstyle);
+    }
+
+    //-----------------------------  For Reseting Sign MEMORY -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "RESETMEMORY")) { //---------------  looking for [RESET] -----------
+      Serial.println(F("got RESET MEMORY"));
+      resetEeprom();
+      previous_restart_Millis = millis();
+      restartit = true;
+    }
+
+    //-----------------------------  For Reseting Sign System -----------------------------------------------------------------
+
+    if ((getStringPartByNr(msg, ',', i) == "RESETALL")) { //---------------  looking for [RESET] -----------
+      Serial.println(F("got RESET ALL"));
+      previous_restart_Millis = millis();
+      restartit = true;
+    }
+
+
+    //-----------------------------  For MESHSSID Name -----------------------------------------------------------------
+
+    //  if ((getStringPartByNr(msg, ',', i) == "SETSSID")) { //---------------  looking for [SETSSID]  then  [NEW SSID]-----------
+    //    Serial.println(F("got new Mesh SSID"));
+    //    meshssid = getStringPartByNr(msg, ',', i + 1).c_str();
+    //    meshssid = meshssid + '\0';
+    //
+    //    if (meshssid != Sessid) {
+    //      Sessid = meshssid;
+    //      EEPROM.begin(512);
+    //      delay(10);
+    //      for (int i = 0; i < 19); ++i)
+    //      {
+    //        if (meshssid[i] == '\0') break;
+    //        EEPROM.write(100 + i, meshssid[i]);
+    //        Serial.print("Wrote: ");
+    //        Serial.println(meshssid[i]);
+    //      }
+    //      EEPROM.commit();
+    //      EEPROM.end();
+    //      Serial.println("got SSID update");
+    //      Serial.println(meshssid);
+    //
+    //    }
+    //  }
+
+
+    //-----------------------------  For MESHPASSWORD Name -----------------------------------------------------------------
+
+    //  if ((getStringPartByNr(msg, ',', i) == "SETPASSWORD")) { //---------------  looking for [SETPASSWORD]  then  [NEW PASSWORD]-----------
+    //    Serial.println(F("got new Mesh PASSWORD"));
+    //    meshpassword = (getStringPartByNr(msg, ',', i + 1)).c_str();
+    //    meshpassword = meshpassword + '\0';
+    //
+    //    if (meshpassword != Sepass) {
+    //      Sepass = meshpassword;
+    //      EEPROM.begin(512);
+    //      delay(10);
+    //      for (int i = 0; i < 19; ++i)
+    //      {
+    //        if (meshpassword[i] == '\0') break;
+    //        EEPROM.write(120 + i, meshpassword[i]);
+    //        Serial.print("Wrote: ");
+    //        Serial.println(meshpassword[i]);
+    //      }
+    //      EEPROM.commit();
+    //      EEPROM.end();
+    //      Serial.println("got PASS update");
+    //      Serial.println(meshpassword);
+    //    }
+    //  }
+
+  }
+}
+
+void resetssidpassport() {
+
+  Serial.println("RESETING SIDD and PASSWORD and PORT");
+
+  meshssid = "GAP";
+  meshssid = meshssid + '\0';
+  if (meshssid != Sessid) {
+    Sessid = meshssid;
+    EEPROM.begin(512);
+    delay(10);
+    for (int i = 0; i < 19; ++i)
+    {
+      if (meshssid[i] == '\0') break;
+      EEPROM.put(100 + i, meshssid[i]);
+      EEPROM.commit();
+      Serial.print("Wrote: ");
+      Serial.println(meshssid[i]);
+    }
+    EEPROM.commit();
+    EEPROM.end();
+    Serial.println("got SSID update");
+    Serial.println(meshssid);
+  }
+
+
+
+  meshpassword = "12345678";
+  meshpassword = meshpassword + '\0';
+  if (meshpassword != Sepass) {
+    Sepass = meshpassword;
+    EEPROM.begin(512);
+    delay(10);
+    for (int i = 0; i < 19; ++i)
+    {
+      if (meshpassword[i] == '\0') break;
+      EEPROM.put(120 + i, meshpassword[i]);
+      EEPROM.commit();
+      Serial.print("Wrote: ");
+      Serial.println(meshpassword[i]);
+    }
+    EEPROM.commit();
+    EEPROM.end();
+    Serial.println("got PASS update");
+    Serial.println(meshpassword);
+  }
+
+
+  previous_restart_Millis = millis();
+  restartit = true;
+}
+
+void startmeshnow() {
+
+  mesh.setDebugMsgTypes( ERROR | STARTUP);  // set before init() so that you can see startup messages
+  mesh.init( MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT, WIFI_AP_STA, 4, 0, 6);
+  Serial.println("MESH STARTING");
+  mesh.onReceive(&receivedCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onNodeTimeAdjusted(&nodeTimeAdjustedCallback);
+  mesh.onNodeDelayReceived(&delayReceivedCallback);
+  mesh.onDroppedConnection(&droppedConnectionCallback);
+  userScheduler.addTask( taskSendMessage );
+  taskSendMessage.enable();
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+//--------------------------------------------SENSORS---------------------------------------
+
+void lightsensor()  {               //---Light Sensor data handle-----------
+  
+  if (sensormode == 1 && autobright == 1) {
+
+    int position = 127;
+    char buffer[20];
+
+    
+    //int light_sensor_read = analogRead(lightsensorpin);
+    int light_sensor_read = 2200;
+    Serial.print(F("Light Read = "));
+    Serial.println(light_sensor_read);
+
+    delay(20);
+    if (light_sensor_read <= 800) {
+      brightness = 1;
+    } else if (light_sensor_read >= 801 && light_sensor_read <= 1600) {
+      brightness = 2;
+    } else if (light_sensor_read >= 1601 && light_sensor_read <= 2400) {
+      brightness = 3;
+    } else if (light_sensor_read >= 2401 && light_sensor_read <= 3200) {
+      brightness = 4;
+    } else if (light_sensor_read >= 3201) {
+      brightness = 5;
+    }
+    if (brightness == 0) {
+      brightness = 1;
+    }
+    setBrightness(brightness);
+    iport_s();
+    itoa((position << 8) |  brightness, buffer, 10);
+    
+    if (hybrid_interface == false)
+    {
+      Serial2.println(buffer);
+    }
+    else
+    {
+      buffer3Data = atoi(buffer);
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+    Serial.println("sent it");
+    iport_r();
+    Serial2.flush();
+  }
+}
+
+
+//void temp1()  {              //---Temp Sensor data handle-----------
+//
+//  if (masterslave == 1) {
+//
+//    sensor1.requestTemperatures();
+//    tempread = sensor1.getTempCByIndex(0);
+//    Serial.println("Temp Read");
+//    Serial.println(tempread);
+//
+//    if (tempread <= 30) {
+//      templvl = 34;
+//    } else if (tempread >= 31 && tempread <= 35) {
+//      templvl = 30;
+//    } else if (tempread >= 36 && tempread <= 40) {
+//      templvl = 26;
+//    } else if (tempread >= 41 && tempread <= 45) {
+//      templvl = 23;
+//    } else if (tempread >= 46 && tempread <= 50) {
+//      templvl = 20;
+//    } else if (tempread >= 51 && tempread <= 55) {
+//      templvl = 17;
+//    } else if (tempread >= 56 && tempread <= 60) {
+//      templvl = 14;
+//    } else if (tempread >= 61 && tempread <= 65) {
+//      templvl = 11;
+//    } else if (tempread >= 66 && tempread <= 70) {
+//      templvl = 8;
+//    } else if (tempread >= 71 && tempread <= 78) {
+//      templvl = 5;
+//    } else if (tempread >= 79) {
+//      templvl = 2;
+//    }
+//    else {
+//      ;
+//    }
+//
+//    if (templvl == 0) {
+//      templvl = 1;
+//    }
+//  }
+//}
+
+
+//--------------------------------------------------------------------
+
+void echo(int input)
+{
+  iport_s();
+  
+  if (hybrid_interface == false)
+    {
+      Serial2.println(input);
+    }
+    else
+    {
+      buffer3Data = input;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+  Serial.println("echo");
+  iport_r();
+  Serial2.flush();
+}
+
+//--------------------------------------------------------------------
+
+void mem()
+{
+
+  iport_s();
+  delay(200);
+
+  char buffer3[30];
+
+  
+  for (int digit = 0; digit <= 36; digit++) {
+    // Generate the packet
+    itoa(((digit) << 8) | ((digitval[digit] << 3) | 5), buffer3, 10);
+    delay(50);
+    if (hybrid_interface == false)
+    {
+      Serial2.println(buffer3);
+    }
+    else
+    {
+      buffer3Data = atoi(buffer3);;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+    
+    delay(50);
+  }
+
+  
+  if (cashoo == 1) {
+    if (hybrid_interface == false)
+    {
+      Serial2.println(8888);
+    }
+    else
+    {
+      buffer3Data = 8888;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+  }
+  if (creditoo == 1) {
+    if (hybrid_interface == false)
+    {
+      Serial2.println(9999);
+    }
+    else
+    {
+      buffer3Data = 9999;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+  }
+  if (debitoo == 1) {
+    if (hybrid_interface == false)
+    {
+      Serial2.println(7777);
+    }
+    else
+    {
+      buffer3Data = 7777;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+  }
+
+
+
+  Serial.println("mem");
+
+  delay(80);
+  iport_r();
+
+  Serial2.flush();
+}
+
+//--------------------------------------------------------------------
+
+void flasher(int brightness)
+{
+
+  if (transAddress == 3) {
+    char buffer1[30];
+    char buffer2[30];
+
+    if (mode == 0) {
+      cashdebitcredit = !cashdebitcredit;
+      Serial.println("Changing cash/credit");
+
+      iport_s();
+      delay(200);
+
+      Serial.println("");
+      Serial.println("flash");
+        
+      if (cashdebitcredit == 0) {
+        
+        setcashbri(brightnessmap2[0]); //-------------- reset
+        setcreditbri(brightnessmap2[0]);
+        setdebitbri(brightnessmap2[0]);
+
+        if (flashstyle == 1) {
+          setcashbri(brightnessmap2[brightcmd]);
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9911);
+          }
+          else
+          {
+            buffer3Data = 9911;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 2) {
+          setcashbri(brightnessmap2[brightcmd]);
+          
+          if (hybrid_interface == false)
+          {
+            Serial2.println(8888);
+            Serial2.println(9922);
+          }
+          else
+          {
+            
+            buffer3Data = 8888;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+            buffer3Data = 9922;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 3) {
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9933);
+          }
+          else
+          {
+            buffer3Data = 9933;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 4) {
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+          
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9944);
+          }
+          else
+          {
+            buffer3Data = 9944;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 5) {
+          setdebitbri(brightnessmap2[brightcmd]);
+          
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9955);
+          }
+          else
+          {
+            buffer3Data = 9955;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+
+        
+        for (int digit = 0; digit <= 17; digit++) {
+          itoa(((digit) << 8) | ((digitval[digit] << 3) | 5), buffer1, 10);
+          if (hybrid_interface == false)
+          {
+          Serial2.println(buffer1);
+          }
+          else
+          {
+          buffer3Data = atoi(buffer1);
+          generatePacket(packet, password_mac_gen, buffer3Data);
+          sendPacketViaSerial2(packet, sizeof(packet));
+          }
+          
+          delay(40);
+          Serial.print(digitval[digit]);
+        }
+        updateShiftRegister();
+        delay(40);
+        delay(5);
+        Serial.println("CASH");
+      }
+
+      else if (cashdebitcredit == 1) {
+          
+        setcashbri(brightnessmap2[0]); //-------------- reset
+        setcreditbri(brightnessmap2[0]);
+        setdebitbri(brightnessmap2[0]);
+
+        if (flashstyle == 1) {
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9991);
+          }
+          else
+          {
+            buffer3Data = 9991;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 2) {
+          setcreditbri(brightnessmap2[brightcmd]);
+          
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9999);
+            Serial2.println(9992);
+          }
+          else
+          {
+            
+            buffer3Data = 9999;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+            buffer3Data = 9992;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 3) {
+          setcreditbri(brightnessmap2[brightcmd]);
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9993);
+          }
+          else
+          {
+            buffer3Data = 9993;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 4) {
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9994);
+          }
+          else
+          {
+            buffer3Data = 9994;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+        if (flashstyle == 5) {
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          if (hybrid_interface == false)
+          {
+            Serial2.println(9995);
+          }
+          else
+          {
+            buffer3Data = 9995;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+        }
+
+        
+        for (int digit = 0; digit <= 17; digit++) {
+          itoa(((digit) << 8) | ((digitval[(digit + digit_max)] << 3) | 5), buffer2, 10);
+          if (hybrid_interface == false)
+          {
+          Serial2.println(buffer2);
+          }
+          else
+          {
+          buffer3Data = atoi(buffer2);
+          generatePacket(packet, password_mac_gen, buffer3Data);
+          sendPacketViaSerial2(packet, sizeof(packet));
+          }
+          delay(40);
+          Serial.print(digitval[(digit + digit_max)]);
+        }
+        updateShiftRegister();
+        delay(40);
+        delay(5);
+        Serial.println("CREDIT");
+      }
+
+      delay(80);
+      iport_r();
+
+    }
+    Serial2.flush();
+  }
+
+}
+void askprice()
+{
+  if (transAddress != 3) 
+  {
+    iport_s();
+    delay(200);
+    if (hybrid_interface == false)
+    {
+      Serial2.println(8050);
+    }
+    else
+    {
+      buffer3Data = 8050;
+      generatePacket(packet, password_mac_gen, buffer3Data);
+      sendPacketViaSerial2(packet, sizeof(packet));
+    }
+    delay(50);
+    Serial.println("ASK PRICES FROM MASTER");
+    delay(80);
+    iport_r();
+    Serial2.flush();
+  }
+}
+//---------------------------Start up Set Up------------
+void setup() {
+
+
+  
+
+  Serial.begin(115200);
+  Serial.setTimeout(20);
+
+  //hc12.begin(9600);
+  //hc12.setTimeout(10);
+  Serial2.begin(9600, SERIAL_8N1, RXD2, TXD2);  // Serial for RF
+  Serial2.setTimeout(40);
+
+  if(!SPIFFS.begin(true)){
+      Serial.println("An Error has occurred while mounting SPIFFS");
+      return;
+    }
+  pinMode(setHC, OUTPUT);
+  digitalWrite(setHC, HIGH);
+
+  pinMode(lightsensorpin, INPUT);
+  pinMode(resetssidpin, INPUT_PULLUP);
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(outputEnablePin, OUTPUT);
+  pinMode(outputEnablePin_PUMPTOPPER, OUTPUT);
+
+  pinMode(dp1pin, INPUT);
+  pinMode(dp2pin, INPUT);
+  pinMode(dp3pin, INPUT);
+  pinMode(dp4pin, INPUT);
+  pinMode(dp5pin, INPUT);
+  pinMode(dp6pin, INPUT);
+  pinMode(dp7pin, INPUT);
+
+  pinMode(latchPin, OUTPUT);
+  pinMode(clockPin, OUTPUT);
+  pinMode(dataPin, OUTPUT);
+  pinMode(pumptopperpcb, INPUT_PULLDOWN);
+  digitalWrite(pumptopperpcb, LOW);
+
+  digitalWrite(resetssidpin, HIGH);
+EEPROM.begin(500);
+  delay(4000);
+
+  ledcSetup(ledChannel_0, freq_cdc, resolution_cdc);
+  ledcAttachPin(cashled, ledChannel_0);
+  ledcSetup(ledChannel_1, freq_cdc, resolution_cdc);
+  ledcAttachPin(debitled, ledChannel_1);
+  ledcSetup(ledChannel_2, freq_cdc, resolution_cdc);
+  ledcAttachPin(creditled, ledChannel_2);
+  String inputMessage9;
+    //--------------------------------------setting the hc12 channel to what the dip switches are-------
+    //--------------------------------------------------------//
+  
+        
+  grade_c_firstwrite=readFile(SPIFFS, "/grade_c_firstwrite.txt").toInt();
+  Serial.print("grade_c_firstwrite ");
+  Serial.print(grade_c_firstwrite);
+  if ((grade_c_firstwrite == 0) || (grade_c_firstwrite > 1)) {
+    delay(50);
+    //EEPROM.put(61, 0);  // set gradecontrol off
+    //EEPROM.commit();
+    inputMessage9 = "0";
+    writeFile(SPIFFS, "/grade_control.txt", inputMessage9.c_str());
+    inputMessage9 = "1";
+    writeFile(SPIFFS, "/grade_c_firstwrite.txt", inputMessage9.c_str());
+    Serial.print("gradecontrol UPDATED first time write= ");
+  }
+  //---- CHECK PCB --------------------//
+  if(digitalRead(pumptopperpcb) == HIGH)
+  {
+    pumptopper_pcb = true;
+    Serial.println("THIS IS PUMPTOPPER PCB");
+  }
+  if(pumptopper_pcb == false)
+  {
+    ledcSetup(ledChannel_3, freq, resolution);
+    ledcAttachPin(outputEnablePin, ledChannel_3);
+  }
+  else
+  {
+    ledcSetup(ledChannel_4, freq_1, resolution_1);
+    ledcAttachPin(outputEnablePin_PUMPTOPPER, ledChannel_4);
+    ledcWrite(ledChannel_4, ((brightnessmap[brightness])));
+  }
+  // -------------------- HYBRID INTERFACE CHECK -----------------------------------
+  hybrid_interface = EEPROM.read(63);  //check grade control
+  hybrid_interface = 0; //temp 
+  Serial.print(F("hybrid_interface = "));
+  Serial.println(hybrid_interface);
+  if (hybrid_interface == 1)
+  {
+    def_master_ch = 8;
+    def_secondary_ch = 10;
+     Serial.print(F("hybrid Network ON"));
+  }
+  else
+  {
+    if(pumptopper_pcb == true)
+    {
+      def_master_ch = 3;
+      def_secondary_ch = 5;
+      Serial.print(F("standard pumptopper Network ON"));
+    }
+    else
+    {
+      def_master_ch = 4;
+      def_secondary_ch = 6;
+      Serial.print(F("standard PILEON Network ON"));
+      
+    }
+    
+  }
+  //--------------------------------------setting the hc12 channel to what the dip switches are-------
+  //grade_control = EEPROM.read(61);  //check grade control
+  grade_control = readFile(SPIFFS, "/grade_control.txt").toInt();
+  Serial.print(F("grade_control = "));
+  Serial.println(grade_control);
+  
+  if (grade_control == 1)
+  {
+    transAddress = EEPROM.read(77); //READ  MASTER or SECONDARY BOARD
+  }
+  else
+  {
+    transAddress = address();
+  }
+  Serial.println(transAddress);
+  channel = channelmap[transAddress];
+  
+  Serial.println("DIP SWITCH channel no. is = ");
+  Serial.println(channel);
+  
+  Remote_and_Mas_channel  = EEPROM.read(118); //READ SOFT MASTER CHANNEL
+  //EEPROM.get(118,Remote_and_Mas_channel );
+  if((Remote_and_Mas_channel >= 17) || (Remote_and_Mas_channel == 0))
+  {
+    Remote_and_Mas_channel = def_master_ch;  ///default master broadcast channel
+    Serial.println("Default mas channel" );
+  }
+  delay(200);
+  Serial.println("Remote_and_Mas_channel is" );
+  Serial.println(Remote_and_Mas_channel);
+  
+  //Mas_to_Sec_Address= Remote_and_Mas_channel+2;
+  
+  channel = channelmap[Remote_and_Mas_channel];
+  Serial.println("soft Master  channel no. is = ");
+  Serial.println(channel);
+  sec_channel = EEPROM.read(119); //READ SOFT MASTER CHANNEL
+  //EEPROM.get(119,sec_channel);
+  if((sec_channel >= 17) || (sec_channel == 0))
+  {
+    sec_channel = def_secondary_ch;  ///default master broadcast channel
+    Serial.println("DEFAULT master broadcast channel ");
+  }
+  channel = channelmap[sec_channel];
+  Serial.print ("soft Master to Secondary channel no. is = ");
+  Serial.println(sec_channel);
+  Serial.println(channel);
+  delay(200);
+  
+  if(transAddress == 3)
+  {
+    if((Remote_and_Mas_channel <= 15) && (Remote_and_Mas_channel != 0))
+    {
+      recievedata_RF_channel = Remote_and_Mas_channel;
+      Serial.println("BOARD IS MASTER ");
+      Serial.println(recievedata_RF_channel);
+      Serial.println(sec_channel); 
+    }
+    else
+    {
+      recievedata_RF_channel = def_master_ch;
+      Serial.println("DEFAULT BOARD IS MASTER ");
+      Serial.println(recievedata_RF_channel);
+      Serial.println(sec_channel); 
+    }
+  }
+  else
+  {
+    if((sec_channel <= 15) && (sec_channel != 0))
+    {
+      recievedata_RF_channel = sec_channel;
+      sec_channel = Remote_and_Mas_channel; //SECONDARY
+      Serial.println("BOARD IS SECONDARY  = ");
+      Serial.println(recievedata_RF_channel);
+      Serial.println(sec_channel); 
+    }
+    else
+    {
+      recievedata_RF_channel = def_secondary_ch;
+      sec_channel = def_master_ch;
+      Serial.println("DEFAULT BOARD IS SECONDARY ");
+      Serial.println(recievedata_RF_channel);
+      Serial.println(sec_channel);
+    }
+  }
+
+  iport_r();
+
+  initializeStorage();
+
+ // startmeshnow();
+
+  Serial.println("");
+
+  delay(500);
+  Serial.println("My Mesh IP is " + IPAddress(mesh.getAPIP()).toString());
+  Serial.println(mesh.getNodeId());
+  delay(500);
+  // -------- ESP NOW SETUP INITIALISE ------------------//
+    //Set device in AP mode to begin with
+  //WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_STA);
+  // configure device AP mode
+  configDeviceAP();
+  // This is the mac address of the Slave in AP Mode
+  Serial.print("AP MAC: "); Serial.println(WiFi.softAPmacAddress());
+  // Init ESPNow with a fallback logic
+  InitESPNow();
+  // Once ESPNow is successfully Init, we will register for recv CB to
+  // get the status of Trasnmitted packet
+  esp_now_register_send_cb(OnDataSent);
+  // get recv packer info.
+  esp_now_register_recv_cb(OnDataRecv);
+  
+//------------------------------------------------------------------------------------------------------//
+  
+  
+
+
+
+  digitpos = getdigit();
+  
+  if(grade_control == 1)
+  {
+    EEPROM.get(digitpos_mem_pos, digitpos);
+    if (digitpos < 0 || digitpos >= 37) {
+      digitpos = 0;
+    }
+  }
+  Serial.print("digitpos = ");
+  Serial.println(digitpos);
+  position_start(digitpos); //wifi pumptopper
+  updateShiftRegister();
+
+//-------------------------------- time to flash set ------
+
+  if (transAddress == 3) {
+    delay(100);
+    ftime=readFile(SPIFFS, "/ftime.txt").toInt();
+    //temp 
+    ftime = 1;
+    Serial.println("ftime flash read= ");
+    Serial.println(ftime);
+    delay(100);
+  }
+  switch (ftime) {
+    case 0:
+      timetoflash = 3000;
+      break;
+    case 1:
+      timetoflash = 3000;
+      break;
+    case 2:
+      timetoflash = 4000;
+      break;
+    case 3:
+      timetoflash = 5000;
+      break;
+    case 4:
+      timetoflash = 6000;
+      break;
+    case 5:
+      timetoflash = 7000;
+      break;
+    case 6:
+      timetoflash = 8000;
+      break;
+    case 7:
+      timetoflash = 9000;
+      break;
+    case 8:
+      timetoflash = 10000;
+      break;
+  }
+
+  //--------------------------------Flashing out Style
+
+  if (transAddress == 3) {
+    delay(100);
+    fstyle=readFile(SPIFFS, "/fstyle.txt").toInt();
+    Serial.println("fstyle flash read= ");
+    Serial.println(fstyle);
+    delay(100);
+  }
+  switch (fstyle) {
+    case 1:
+      flashstyle = 1;
+      break;
+    case 2:
+      flashstyle = 2;
+      break;
+    case 3:
+      flashstyle = 3;
+      break;
+    case 4:
+      flashstyle = 4;
+      break;
+    case 5:
+      flashstyle = 5;
+      break;
+  }
+
+ 
+  //-------------------------------- flashing on off memory ------
+
+  foo_firstwrite = readFile(SPIFFS, "/foo_firstwrite.txt").toInt();
+  if ((foo_firstwrite == 0) || (foo_firstwrite > 1)){
+        delay(50);
+        writeFile(SPIFFS, "/foo.txt", inputMessage5.c_str());
+        writeFile(SPIFFS, "/foo_firstwrite.txt", inputMessage5.c_str());
+        Serial.print("foo UPDATED first time write= ");
+      }
+
+  if (transAddress == 3) {
+    delay(100);
+    foo=readFile(SPIFFS, "/foo.txt").toInt();
+    Serial.println("foo flash read= ");
+    Serial.println(foo);
+  }
+
+
+  //-------------------------------- CDC light on \ off ------
+  setcashbri(brightnessmap2[0]); //-------------- reset
+  setcreditbri(brightnessmap2[0]);
+  setdebitbri(brightnessmap2[0]);
+
+  if (transAddress == 3) {
+    delay(100);
+    cashoo=readFile(SPIFFS, "/cashoo.txt").toInt();
+    Serial.println("cashoo flash read= ");
+    Serial.println(cashoo);
+  }
+  if (transAddress == 3) {
+    delay(100);
+    creditoo=readFile(SPIFFS, "/creditoo.txt").toInt();
+    Serial.println("creditoo flash read= ");
+    Serial.println(creditoo);
+  }
+  if (transAddress == 3) {
+    delay(100);
+    debitoo=readFile(SPIFFS, "/debitoo.txt").toInt();
+    Serial.println("debitoo flash read= ");
+    Serial.println(debitoo);
+  }
+  
+  //------------------  if on then turn on
+  if (transAddress == 3 && creditoo == 1) {
+    setcreditbri(brightnessmap2[3]);
+    setcreditval = 1;
+  }
+  if (transAddress == 3 && cashoo == 1) {
+    setcashbri(brightnessmap2[3]);
+    setcashval = 1;
+  }
+  if (transAddress == 3 && debitoo == 1) {
+    setdebitbri(brightnessmap2[3]);
+    setdebitval = 1;
+  }
+
+  //------------------  if off then turn off
+  if (transAddress == 3 && creditoo == 0) {
+    setcreditbri(brightnessmap2[0]);
+    setcreditval = 0;
+  }
+  if (transAddress == 3 && cashoo == 0) {
+    setcashbri(brightnessmap2[0]);
+    setcashval = 0;
+  }
+  if (transAddress == 3 && debitoo == 0) {
+    setdebitbri(brightnessmap2[0]);
+    setdebitval = 0;
+  }
+
+  
+
+
+  //-------------------------------- MODES ------
+
+
+  mode = 0;
+  cashdebitcredit = 0;
+
+  //-------------------------------- set timers ------
+
+  timer.setTimeout(1 * 60 * 1000UL);
+  timermode.setTimeout(1 * 5 * 1000UL);
+  timerflash.setTimeout(timetoflash);
+  timerwifiswitch.setTimeout(1 * 2 * 1000UL);
+  timerwifiswitch.stop();
+  timerv5.setTimeout(1 * 2 * 1000UL);
+  timerresend.setTimeout(1 * 10 * 1000UL);
+  timer_blink_channel.setTimeout(1 * 3 * 1000UL);
+  hmitimer.setTimeout(1 * 20 * 1000UL);
+  hmitimer.restart();
+
+  mas_send_channel = sec_channel;
+  iport_s();
+  delay(100);
+  iport_r();
+
+  if (transAddress == 3) {
+    sensormode = 1;
+    mem();
+  }
+  //-------------------- ASK PRICES FROM MASTER ----------------------//
+ //askprice();
+  unsigned long startTime = millis(), currentTime;
+
+
+}
+
+//------------------------------------------------Start main loop----------------------------------------------------------------------------
+
+void loop() {
+  current_millis = millis();
+  unsigned long elapsed_time = current_millis - previous_valuedata_Millis;
+  //Serial.println("elapsed_time");  
+  if(New_ESP_NOW_DATA_Recieve == true)
+  {
+    //Serial.println("New_ESP_NOW_DATA_Recieve");
+    ESP_Now_receive();
+    New_ESP_NOW_DATA_Recieve = false;
+  }
+  
+
+  if (sensormode == 1) {
+
+    if (current_millis - previous_sensor_Millis > sensor_interval) {
+      previous_sensor_Millis = current_millis;
+      //lightsensor();  //tremp
+    }
+
+    if ((elapsed_time > valuedata_interval )&& (valuedatain == true)) {
+      mem();
+      //updateShiftRegister();
+      valuedatain = false;
+    }
+  }
+
+  if (current_millis - previous_valuedata_Millis > valuedata_interval && sensormode == 0 && valuedatain == true) {
+    updateShiftRegister();
+    valuedatain = false;
+  }
+  if (transAddress != 3) {
+    if (first_time_price == false) {
+      if (timerresend.isExpired()) {
+        askprice();
+        timerresend.restart();
+      }
+    }
+  }
+//-      ------------------------- esp now ---------------------------------//
+  if(one_time_init== false)
+  {
+    
+    one_time_init = true;
+     Permanent_Slaves=readFile(SPIFFS, "/Permanent_Slaves.txt");
+    Permanent_num_paired=readFile(SPIFFS, "/Permanent_num_paired.txt").toInt();
+    Serial.print("Permanent_Slaves :- "); Serial.println(Permanent_Slaves);
+    Serial.print("Permanent_num_paired :- "); Serial.println(Permanent_num_paired);
+    
+    // Define the array to store extracted MAC addresses
+    Permanent_paired_Slaves[Permanent_num_paired];
+
+    // Initialize the array elements to empty strings
+    for (int i = 0; i < Permanent_num_paired; ++i) {
+        Permanent_paired_Slaves[i] = "";
+    }
+
+    // Parse the Permanent_Slaves string
+    String delimiter = ",";
+    int pos = 0;
+    int index = 0;
+    while ((pos = Permanent_Slaves.indexOf(delimiter)) != -1 && index < Permanent_num_paired) {
+        // Extract the MAC address substring
+        String mac_address = Permanent_Slaves.substring(0, pos);
+        
+        // Store the MAC address in the array
+        Permanent_paired_Slaves[index] = mac_address;
+
+        // Move to the next MAC address
+        Permanent_Slaves.remove(0, pos + delimiter.length());
+        ++index;
+    }
+
+    // If there are any remaining MAC addresses after parsing, store them in the array
+    if (index < Permanent_num_paired && Permanent_Slaves.length() > 0) {
+        Permanent_paired_Slaves[index] = Permanent_Slaves;
+    }
+
+    // Print the extracted MAC addresses
+    for (int i = 0; i < Permanent_num_paired; ++i) {
+        Serial.print("Permanent_paired_Slaves[");
+        Serial.print(i);
+        Serial.print("]: ");
+        Serial.println(Permanent_paired_Slaves[i]);
+        //Temp_slaves[i]  = Permanent_paired_Slaves[i];
+    }
+
+    // Convert MAC addresses in Permanent_paired_Slaves to byte format
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            sscanf(Permanent_paired_Slaves[i].c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", 
+                  &Permanent_paired_Slaves_bytes[i][0], &Permanent_paired_Slaves_bytes[i][1],
+                  &Permanent_paired_Slaves_bytes[i][2], &Permanent_paired_Slaves_bytes[i][3],
+                  &Permanent_paired_Slaves_bytes[i][4], &Permanent_paired_Slaves_bytes[i][5]);
+        }
+    
+    generatePassword(Permanent_paired_Slaves_bytes, Permanent_num_paired); // Save the generated password bytes in the variable
+    // Temporary static password testing 
+    //password_mac_gen[0] = 0X6A;
+    //password_mac_gen[1] = 0X75;
+    // Print the generated password
+    printf("Generated Password (hexadecimal): %02X %02X\n", password_mac_gen[0], password_mac_gen[1]);
+
+
+        // Assign byte format MAC addresses to Temp_slaves
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            memcpy(Temp_slaves[i].peer_addr, Permanent_paired_Slaves_bytes[i], 6);
+        }
+
+        // Assign MAC addresses to scan_nodeId_array
+        for (int i = 0; i < Permanent_num_paired; ++i) {
+            uint64_t macAddress = 0;
+            uint8_t *macBytes = Temp_slaves[i].peer_addr;
+            for (int j = 0; j < 6; ++j) {
+                macAddress = (macAddress << 8) | macBytes[j];
+            }
+            //scan_nodeId_array[i] = macAddress;
+        }
+        SlaveCnt = Permanent_num_paired;
+        manageSlave();
+        
+  }
+
+
+
+
+
+  //--------------------------------  RESET SIDD and PASSWORD Function for digit -----------------------------------
+
+
+
+  if (restartit == true) {
+    Serial.print("Reset Count has Expierd");
+    if (current_millis - previous_restart_Millis > restart_interval) {
+      ESP.restart();
+    }
+  }
+  
+
+  
+
+//if (transAddress == 3) {
+  if (sensormode == 1){
+
+    if (foo == 0) {
+      if (timerflash.isExpired()) {
+        flasher(brightness);
+        timerflash.restart();
+      }
+    }
+
+    //      if(timer.isExpired()) {
+    //        lightread();
+    //        timer.restart();
+    //      }
+
+    if (timermode.isExpired()) {
+      Serial.println("restarting timer mode, mode = 0");
+      timermode.stop();
+      mode = 0;
+      if(channel_setting == false)
+      {
+        mem();
+      }
+    }
+
+    if (timerwifiswitch.onRestart()) {
+      delay(50);
+      iport_s();
+      if (hybrid_interface == false)
+      {
+        Serial2.println(8001);
+      }
+      else
+      {
+        buffer3Data = 8001;
+        generatePacket(packet, password_mac_gen, buffer3Data);
+        sendPacketViaSerial2(packet, sizeof(packet));
+      }
+      iport_r();
+      delay(500);
+
+      ESP.restart();
+      delay(50);
+      //timerwifiswitch.stop();
+    }
+
+    if (timerv5.onExpired()) {
+      timerv5.stop();
+      mem();
+      updateShiftRegister();
+    }
+  }
+  //------------------------------HC-12 Com ------------------------------------------
+  /*
+if( RF_channel_updated == true)
+    {
+      if (timer_blink_channel.isExpired()) {// blink display when RF channel changed 
+        //RF_CH_BLINK();
+        ch_dis_blink = !ch_dis_blink;  // toggle blink status
+        if(ch_dis_blink == true)
+        {
+          if (transAddress == 3) //DISPLAY master RECIEVE channel setting
+          {
+            mas_rec_ch_num_1 = mas_rec_ch_num;
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              digitval[i+1] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              if(channel_save == false)
+              {
+                digitval[i] = 12;
+              }
+              else
+              {
+                digitval[i] = 13;
+              }
+              mas_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+            }
+          }
+          else //if recieved data is for SECONDARY channel setting
+          {
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = mas_send_sec_rec_ch_num_1%10;
+              mas_send_sec_rec_ch_num_1/=10;
+              digitval[i+1] = mas_send_sec_rec_ch_num_1%10;
+              mas_send_sec_rec_ch_num_1/=10;
+              digitval[i] = mas_send_sec_rec_ch_num_1%10;
+              mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+            }
+          }
+          updateShiftRegister();
+          Serial.println("FLASH ON");
+        }
+        else if((channel_save == false))
+        {
+          if (transAddress == 3) //DISPLAY MASTER BROADCAST CHANNEL SETTING
+          {
+            
+            if(currentpos == 119)
+            {
+              mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+            }
+            else
+            {
+              mas_rec_ch_num_1 = mas_rec_ch_num+2; // set all grades rf channel to display 
+            }
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              digitval[i+1] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              digitval[i] = 11; // B- BROADCAST CHANNEL
+              mas_rec_ch_num_1 = mas_rec_ch_num+2; // set all grades rf channel to display
+            }
+          }
+          else //if recieved data is for SECONDARY channel setting
+          {
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = 17; //-
+              digitval[i+1] = 16; //H
+              digitval[i] = 13; //C
+            }
+          }
+          updateShiftRegister();
+
+
+          
+          Serial.println("FLASH OFF");
+          if (transAddress == 3) {
+            char buffer4[30];
+            iport_s();
+            if(currentpos == 119)
+            {
+              itoa(((119) << 8) | (((mas_send_sec_rec_ch_num) << 3) | 1), buffer4, 10);  //send  secondary channel specific from hmi change//1
+            }
+            else
+            {
+              itoa(((119) << 8) | (((mas_rec_ch_num+2) << 3) | 1), buffer4, 10);  //save secondary channel //1
+            }
+            if (hybrid_interface == false)
+            {
+              Serial2.println(buffer4);
+            }
+            else
+            {
+              buffer3Data = atoi(buffer4);
+              generatePacket(packet, password_mac_gen, buffer3Data);
+              sendPacketViaSerial2(packet, sizeof(packet));
+            }
+            Serial.println("send secondary channel");
+            iport_r();
+            Serial2.flush();
+          }
+        }
+        else
+        {
+          if (transAddress == 3) //DISPLAY MASTER BROADCAST CHANNEL SETTING
+          {
+            
+            if(currentpos == 119)
+            {
+              mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+            }
+            else
+            {
+              mas_rec_ch_num_1 = mas_rec_ch_num+2; // set all grades rf channel to display 
+            }
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              digitval[i+1] = mas_rec_ch_num_1%10;
+              mas_rec_ch_num_1/=10;
+              digitval[i] = 14; // S- BROADCAST CHANNEL//19 chnaged
+              mas_rec_ch_num_1 = mas_rec_ch_num+2; // set all grades rf channel to display
+            }
+          }
+          else //if recieved data is for SECONDARY channel setting
+          {
+            for(int i=0; i<36; i=i+3)
+            {
+              digitval[i+2] = 10; //BLANK
+              digitval[i+1] = 13; //E
+              digitval[i] = 14; //S
+            }
+          }
+          updateShiftRegister();
+          Serial.println("CHANNEL SAVE");
+
+          
+          // try to send secondary boards recieve channel via master
+          if (transAddress == 3) {
+            char buffer4[30];
+            iport_s();
+            if(currentpos == 119)
+            {
+              itoa(((119) << 8) | (((mas_send_sec_rec_ch_num) << 3) | 1), buffer4, 10);  //send  secondary channel specific from hmi change
+            }
+            else
+            {
+              itoa(((119) << 8) | (((mas_rec_ch_num+2) << 3) | 1), buffer4, 10);  //save secondary channel 
+            }
+            if (hybrid_interface == false)
+            {
+              Serial2.println(buffer4);
+            }
+            else
+            {
+              buffer3Data = atoi(buffer4);
+              generatePacket(packet, password_mac_gen, buffer3Data);
+              sendPacketViaSerial2(packet, sizeof(packet));
+            }
+            Serial.println("send secondary channel");
+            iport_r();
+            Serial2.flush();
+          }
+          
+        }
+        timer_blink_channel.restart();
+      }
+    }*/
+    if ( RF_channel_updated == true)
+  {
+    if (timer_blink_channel.isExpired()) {// blink display when RF channel changed
+      //RF_CH_BLINK();
+      ch_dis_blink = !ch_dis_blink;  // toggle blink status
+      if (ch_dis_blink == true)
+      {
+        if (transAddress == 3) //DISPLAY master RECIEVE channel setting
+        {
+          mas_rec_ch_num_1 = mas_rec_ch_num;
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            if (channel_save == false)
+            {
+              digitval[i] = 13;
+            }
+            else
+            {
+              digitval[i] = 19;
+            }
+            mas_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        else //if recieved data is for SECONDARY channel setting
+        {
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        updateShiftRegister();
+        Serial.println("FLASH ON");
+      }
+      else if ((channel_save == false))
+      {
+        if (transAddress == 3) //DISPLAY MASTER BROADCAST CHANNEL SETTING
+        {
+          if (currentpos == 119)
+          {
+            mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+            //Serial.println("ch rec in no save");
+          }
+          else
+          {
+            mas_rec_ch_num_1 = mas_rec_ch_num + 2; // set all grades rf channel to display
+            //Serial.println("ch autoset in no save");
+          }
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i] = 12; // B- BROADCAST CHANNEL
+            if (currentpos == 119)
+            {
+              mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+              //Serial.println("ch rec in no save");
+            }
+            else
+            {
+              mas_rec_ch_num_1 = mas_rec_ch_num + 2; // set all grades rf channel to display
+              //Serial.println("ch autoset in no save");
+            }
+          }
+        }
+        else //if recieved data is for SECONDARY channel setting
+        {
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = 21; //-
+            digitval[i + 1] = 17; //H
+            digitval[i] = 13; //C
+          }
+        }
+        updateShiftRegister();
+
+
+
+        Serial.println("FLASH OFF");
+        if (transAddress == 3) {
+          char buffer4[30];
+          iport_s();
+          if (currentpos == 119)
+          {
+            itoa(((119) << 8) | (((mas_send_sec_rec_ch_num) << 3) | 0), buffer4, 10);  //send  secondary channel specific from hmi change
+          }
+          else
+          {
+            itoa(((118) << 8) | (((mas_rec_ch_num) << 3) | 0), buffer4, 10); //save secondary channel
+          }
+          Serial2.println(buffer4);
+          //Serial.println("send secondary channel");
+          iport_r();
+          Serial2.flush();
+        }
+      }
+      else
+      {
+        if (transAddress == 3) //DISPLAY MASTER BROADCAST CHANNEL SETTING
+        {
+          if (currentpos == 119)
+          {
+            mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+          }
+          else
+          {
+            mas_rec_ch_num_1 = mas_rec_ch_num + 2; // set all grades rf channel to display
+          }
+          //mas_rec_ch_num_1 = mas_rec_ch_num + 2; // set all grades rf channel to display
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i] = 19; // S- BROADCAST CHANNEL
+            if (currentpos == 119)
+            {
+              mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+              //Serial.println("ch rec in no save");
+            }
+            else
+            {
+              mas_rec_ch_num_1 = mas_rec_ch_num + 2; // set all grades rf channel to display
+              //Serial.println("ch autoset in no save");
+            }
+          }
+        }
+        else //if recieved data is for SECONDARY channel setting
+        {
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = 10; //BLANK
+            digitval[i + 1] = 15; //E
+            digitval[i] = 19; //S
+          }
+        }
+        updateShiftRegister();
+        Serial.println("CHANNEL SAVE");
+
+
+        // try to send secondary boards recieve channel via master
+        if (transAddress == 3) {
+          char buffer4[30];
+          iport_s();
+          if (currentpos == 119)
+          {
+            itoa(((119) << 8) | (((mas_send_sec_rec_ch_num) << 3) | 1), buffer4, 10);  //send  secondary channel specific from hmi change
+          }
+          else
+          {
+            itoa(((118) << 8) | (((mas_rec_ch_num) << 3) | 1), buffer4, 10); //save secondary channel
+          }
+          Serial2.println(buffer4);
+          Serial.println("send secondary channel");
+          iport_r();
+          Serial2.flush();
+        }
+
+      }
+      timer_blink_channel.restart();
+    }
+  }
+  if ( RF_channel_scan == true)
+  {
+    if (timer_blink_channel.isExpired()) {// blink display when RF scan
+      ch_dis_blink = !ch_dis_blink;  // toggle blink status
+      if (ch_dis_blink == true)
+      {
+        if (transAddress == 3) //DISPLAY master RECIEVE channel setting
+        {
+          mas_rec_ch_num_1 = mas_rec_ch_num;//PRIMARY PANEL DISPLAY PRIMARY NUMBER WITH #C
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i] = 13;
+            mas_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        else //if recieved data is for SECONDARY channel setting
+        {
+          mas_rec_ch_num_1 = mas_send_sec_rec_ch_num;
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            /*
+              digitval[i + 2] = mas_send_sec_rec_ch_num_1 % 10;
+              mas_send_sec_rec_ch_num_1 /= 10;
+              digitval[i + 1] = mas_send_sec_rec_ch_num_1 % 10;
+              mas_send_sec_rec_ch_num_1 /= 10;
+              digitval[i] = mas_send_sec_rec_ch_num_1 % 10;
+              mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display*/
+            digitval[i + 2] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_rec_ch_num_1 % 10;
+            mas_rec_ch_num_1 /= 10;
+            digitval[i] = 13;
+            mas_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        updateShiftRegister();
+        Serial.println("FLASH ON");
+      }
+      else
+      {
+        if (transAddress == 3) //DISPLAY MASTER BROADCAST CHANNEL SETTING
+        {
+          mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num ;
+          //PRIMARY PANEL DISPLAY SECONDARY  NUMBER WITH #B
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i] = 12; // B SECONDARY CHANNEL
+            mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        else //if recieved data is for SECONDARY channel setting
+        {
+          mas_send_sec_rec_ch_num_1 = mas_rec_ch_num ;
+          for (int i = 0; i < 48; i = i + 3)
+          {
+            digitval[i + 2] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i + 1] = mas_send_sec_rec_ch_num_1 % 10;
+            mas_send_sec_rec_ch_num_1 /= 10;
+            digitval[i] = 12; // B SECONDARY CHANNEL
+            mas_send_sec_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+          }
+        }
+        updateShiftRegister();
+      }
+      timer_blink_channel.restart();
+    }
+  }
+    //--------------------------------------------------------//
+   while (Serial2.available() > 0) {
+    int input;
+    if(hybrid_interface == false)
+    {
+      input = Serial2.parseInt();
+    }
+    else
+    {
+      Serial2.readBytes(recieved_packet, packet_size);
+      
+      // Print the received packet for verification
+      Serial.println("Received packet:");
+      for (int i = 0; i < packet_size; ++i) {
+          Serial.print(recieved_packet[i], HEX);
+          Serial.print(" ");
+      }
+      Serial.println();
+      memcpy(received_password, recieved_packet, 2);
+      input = (recieved_packet[2] ) | (recieved_packet[3]<< 8);
+      received_crc = recieved_packet[6];
+    }
+
+  if (transAddress == 3) {
+      mode = 1;
+      timermode.restart();
+      timer.restart();
+    }
+
+    
+  if (((memcmp(received_password, password_mac_gen, 2) == 0) || (memcmp(received_password, password_master_gen, 2) == 0) || (hybrid_interface==false))&& (input > 0)) {
+        // Password matches, now check CRC
+        uint32_t calculated_crc = calculateCRC(recieved_packet, packet_size - 1);
+        if ((received_crc == (calculated_crc & 0xFF)) || (hybrid_interface==false)) {
+            Serial.println("Password and CRC verification passed.");
+
+        
+        //int input = 0;
+
+    String inputMessage3;
+    //   timer.restart();
+    
+    if (input > 0) {
+      if (input == 8888 || input == 7777 || input == 9999
+          || input == 9991 || input == 9911 || input == 9992
+          || input == 9922 || input == 9993 || input == 9933
+          || input == 9994 || input == 9944 || input == 9995
+          || input == 9955 || input == 8001 || input == 8002) {
+
+        //        setcashbri(brightnessmap2[0]);
+        //        setcreditbri(brightnessmap2[0]);
+        //        setdebitbri(brightnessmap2[0]);
+
+        if (input == 8001 && transAddress != 3) {
+          ESP.restart();
+        }
+      if (transAddress == 3 && input == 8002) { //-----RESET FUNCTION-----------
+          delay(50);
+          iport_s();
+          if (hybrid_interface == false)
+          {
+            Serial2.println(8001);
+          }
+          else
+          {
+            buffer3Data = 8001;
+            generatePacket(packet, password_mac_gen, buffer3Data);
+            sendPacketViaSerial2(packet, sizeof(packet));
+          }
+          delay(100);
+          ESP.restart();
+        }
+
+
+        if (transAddress == 3 && input == 8050) {
+          mem();
+        }
+
+        if (input == 8888) {
+          setcashbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9999) {
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 7777) {
+          setdebitbri(brightnessmap2[brightcmd]);
+        }
+        //----------------------------------
+
+        if (input == 9911) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcashbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9991) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9922) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcashbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9992) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9933) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9993) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9944) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9994) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9955) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[brightcmd]);
+        }
+        if (input == 9995) {
+          setcashbri(brightnessmap2[0]);
+          setcreditbri(brightnessmap2[0]);
+          setdebitbri(brightnessmap2[0]);
+          setcashbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+        }
+      }
+
+      int cmd = input & 7;
+      int value = (input & 255) >> 3;
+      currentpos = input >> 8;
+      if (cmd == 5)
+      {
+        Serial.println(value);
+      }
+      else
+      {
+        Serial.println(input);
+      }
+
+      if ((transAddress == 3) && (currentpos != 122)
+          && (currentpos != 123) && (currentpos != 124)
+          && (currentpos != 125) && (currentpos != 126) && (currentpos != 118)&& (currentpos != 119) && (cmd != 5) && (cmd != 6)) {
+        echo(input);
+      }
+      
+      
+
+      if (transAddress == 3 && input == 8050) {
+        sensormode = 1;
+        mem();
+        }
+
+      if (input == 7001) {
+        fontstyle = 0;
+        updateShiftRegister();
+        if (fontstyle != fontstyle_mem) {
+          fontstyle_mem = fontstyle;
+          EEPROM.put(fontstyle_mem_pos, fontstyle);
+          EEPROM.commit();
+        }
+      }
+      if (input == 7002) {
+        fontstyle = 1;
+        updateShiftRegister();
+        if (fontstyle != fontstyle_mem) {
+          fontstyle_mem = fontstyle;
+          EEPROM.put(fontstyle_mem_pos, fontstyle);
+          EEPROM.commit();
+        }
+      }
+      if (input == 7003) {
+        fontstyle = 2;
+        updateShiftRegister();
+        if (fontstyle != fontstyle_mem) {
+          fontstyle_mem = fontstyle;
+          EEPROM.put(fontstyle_mem_pos, fontstyle);
+          EEPROM.commit();
+        }
+      }
+
+      //if ((currentpos >= digitpos) && (currentpos < (digitpos + maxdigits))) {
+      if ((currentpos < (digitpos + maxdigits))) {
+        switch (cmd) {
+          case 1:
+            flash = true;
+            updateShiftRegister();
+            delay(150);
+            flash = false;
+            updateShiftRegister();
+            break;
+          case 2:
+            break;
+          case 3:
+            //inc digit
+            if (cashdebitcredit == 0) {
+              digitval[currentpos - digitpos]++;
+              if (digitval[currentpos - digitpos] > 9) {
+                digitval[currentpos - digitpos] = 9;
+              }
+              EEPROM.put(currentpos - digitpos, digitval[currentpos - digitpos]);
+              EEPROM.commit();
+              updateShiftRegister();
+            } else if (cashdebitcredit == 1) {
+              digitval[currentpos - digitpos + digit_max]++;
+              if (digitval[currentpos - digitpos + digit_max] > 9) {
+                digitval[currentpos - digitpos + digit_max] = 9;
+              }
+              EEPROM.put(currentpos - digitpos + digit_max, digitval[currentpos - digitpos + digit_max]);
+              EEPROM.commit();
+              updateShiftRegister();
+            }
+            break;
+          case 4:
+          
+            if (cashdebitcredit == 0) {
+              digitval[currentpos - digitpos]--;
+              if (digitval[currentpos - digitpos] < 0) {
+                digitval[currentpos - digitpos] = 0;
+              }
+              EEPROM.put(currentpos - digitpos, digitval[currentpos - digitpos]);
+              EEPROM.commit();
+              updateShiftRegister();
+            } else if (cashdebitcredit == 1) {
+              digitval[currentpos - digitpos + digit_max]--;
+              if (digitval[currentpos - digitpos + digit_max] < 0) {
+                digitval[currentpos - digitpos + digit_max] = 0;
+              }
+              EEPROM.put(currentpos - digitpos + digit_max, digitval[currentpos - digitpos + digit_max]);
+              EEPROM.commit();
+              updateShiftRegister();
+
+            }
+            break;
+          case 5:
+            //direct digit
+            previous_valuedata_Millis = millis();
+            valuedatain = true;
+            //timerv5.restart();
+            Serial.println(currentpos );
+            //digitval[currentpos - digitpos] = value;
+            digitval[currentpos] = value;
+            updateShiftRegister();
+            if (sensormode == 1) 
+            {
+              EEPROM.put(currentpos, digitval[currentpos]);
+              EEPROM.commit();
+              Serial.println("Digit into mem");
+              
+            }
+            //delay(5);
+
+            first_time_price = true;
+            timerresend.stop();
+            
+            break;
+        }
+      }
+      if (cmd == 6)
+      {
+        foo = 1;  //temporary FLASHER OFF
+        cashdebitcredit = 0;
+        Serial.println(currentpos);
+        Serial.println(value);
+        gradval[currentpos - 50] = value; //51 to 66 pos
+        EEPROM.put(currentpos, value);
+        EEPROM.commit();
+        for (int i = 0; i < 48; i++)
+        {
+          idx[i] = i;
+        }
+        if(currentpos == 51)
+        {
+          digitpos = (((gradval[51 - 50])-1)*3);
+          EEPROM.put(digitpos_mem_pos, digitpos);
+          EEPROM.commit();
+        }
+        
+        gradechange_rec();
+      }
+      if (currentpos == 127) {
+
+        brightcmd = cmd;
+        delay(20);
+        setBrightness(cmd);
+        delay(10);
+        Serial.print ("BRIGHTNESS = ");
+        
+        if (setcreditval == 1 || foo == 0) {
+          setcreditbri(brightnessmap2[brightcmd]);
+        }
+        if (setcashval == 1 || foo == 0) {
+          setcashbri(brightnessmap2[brightcmd]);
+        }
+        if (setdebitval == 1 || foo == 0) {
+          setdebitbri(brightnessmap2[brightcmd]);
+        }
+
+        if (transAddress == 1 && (input == 8888 || input == 9999 || input == 7777)) {
+          setcashbri(brightnessmap2[brightcmd]);
+          setcreditbri(brightnessmap2[brightcmd]);
+          setdebitbri(brightnessmap2[brightcmd]);
+          Serial.print("BRIGHTNESS = transAddress = ");
+          Serial.print(transAddress);
+        }
+        updateShiftRegister();
+      }
+      if (currentpos == 80) {
+        if (value == 1)
+        {
+          sleep_mode = true;
+          delay(50);
+          foo = 1;  //temporary FLASHER OFF
+          cashdebitcredit = 0;
+          digitalWrite(latchPin, 0);
+          for (int i = 0; i < 48; i++)
+          {
+            shiftOut(dataPin, clockPin, MSBFIRST, ~dec_digits[21]);
+          }
+          digitalWrite(latchPin, 1);
+          //Serial.println(" Sleep mode activate  ----- ");
+          delay(50);
+        }
+        else
+        {
+          sleep_mode = false;
+          if (transAddress == 3) {
+            delay(100);
+            foo = EEPROM.read(123);
+          }
+          updateShiftRegister();
+          //delay(5);
+          timerv5.restart();
+          //Serial.println(" Sleep mode off");
+        }
+      }
+
+      if (currentpos == 75) {
+        delay(50);
+        EEPROM.put(currentpos, value);
+        EEPROM.commit();
+        delay(50);
+        //Serial.println("GILLBARCO SETUP");
+        delay(50);
+      }
+      if (currentpos == 61) {
+        delay(50);
+
+        //EEPROM.put(currentpos, value);
+        //EEPROM.commit();
+        inputMessage3 = value;
+        writeFile(SPIFFS, "/grade_control.txt", inputMessage3.c_str());
+        delay(50);
+        Serial.println("GRADECONTROL");
+
+        //grade_control = EEPROM.read(61);
+        grade_control = readFile(SPIFFS, "/grade_control.txt").toInt();
+        Serial.println(grade_control);
+        delay(50);
+        for (int i = 0; i < 48; i = i + 3)
+        {
+          if (grade_control == 1)
+          {
+            digitval[i + 2] = 24;
+            digitval[i + 1] = 23;
+            digitval[i] = 20;
+          }
+          else
+          {
+            digitval[i + 2] = 16;
+            digitval[i + 1] = 16;
+            digitval[i] = 20;
+          }
+
+        }
+        updateShiftRegister();
+      }
+      
+      if (currentpos == 63) {
+        delay(50);
+        EEPROM.put(currentpos, value);
+        EEPROM.commit();
+        delay(50);
+        Serial.println("HYBRID CONTROL");
+        hybrid_interface = EEPROM.read(63);
+        Serial.println(hybrid_interface);
+        delay(50);
+        for (int i = 0; i < 48; i = i + 3)
+        {
+          if (hybrid_interface == 1)
+          {
+            digitval[i + 2] = 23;
+            digitval[i + 1] = 23;
+            digitval[i] = 20;
+          }
+          else
+          {
+            digitval[i + 2] = 16;
+            digitval[i + 1] = 16;
+            digitval[i] = 20;
+          }
+        }
+        updateShiftRegister();
+      }
+      if (currentpos == 76) {
+        delay(50);
+        foo = 1;  //temporary FLASHER OFF
+        cashdebitcredit = 0;
+        //gradval[currentpos - 50] = value; //51 to 66 pos
+        for (int i = 0; i < 48; i++)
+        {
+          idx[i] = i;
+        }
+        gradechange_rec();
+        Serial.println("DISPLAY GRADE ORDER");
+        delay(50);
+      }
+      if (currentpos == 77) { // remained
+        delay(50);
+        if (value == 1)
+        {
+          EEPROM.put(currentpos, 3);
+          EEPROM.commit();
+        }
+        else
+        {
+          EEPROM.put(currentpos, value);
+          EEPROM.commit();
+        }
+        delay(50);
+        //Serial.println("MASTER OR SECONDARY");
+        delay(50);
+        for (int i = 0; i < 48; i = i + 3)
+        {
+          if (value == 1)
+          {
+            digitval[i + 2] = 24;
+            digitval[i + 1] = 23;
+          }
+          else
+          {
+            digitval[i + 2] = 19;
+            digitval[i + 1] = 10;
+          }
+          digitval[i] = total_grades; // 0
+        }
+        updateShiftRegister();
+      }
+      if (currentpos == 78) {
+        delay(50);
+        EEPROM.put(currentpos, value);
+        EEPROM.commit();
+        delay(50);
+        //Serial.println("GRADE ORDER ON");
+        delay(50);
+      }
+
+      if (currentpos == 79) {
+        delay(50);
+        inputMessage3 = value;
+        writeFile(SPIFFS, "/digit_max.txt", inputMessage3.c_str());
+        total_grades=readFile(SPIFFS, "/digit_max.txt").toInt();
+        Serial.print("total_grades UPDATED = ");
+        Serial.println(total_grades);
+        
+      }
+      //===================================================================//
+            if (currentpos == 121) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/fstyle.txt", inputMessage3.c_str());
+        fstyle=readFile(SPIFFS, "/fstyle.txt").toInt();
+        Serial.print("fstyle UPDATED = ");
+        Serial.println(fstyle);
+        timerwifiswitch.restart();
+      }
+      if (currentpos == 122) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/debitoo.txt", inputMessage3.c_str());
+        debitoo=readFile(SPIFFS, "/debitoo.txt").toInt();
+        Serial.print("debitoo UPDATED = ");
+        Serial.println(debitoo);
+        timerwifiswitch.restart();
+      }
+      if (currentpos == 123) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/foo.txt", inputMessage3.c_str());
+        foo=readFile(SPIFFS, "/foo.txt").toInt();
+        Serial.println("foo flash read= ");
+        Serial.println(foo);
+        timerwifiswitch.restart();
+      }
+      if (currentpos == 124) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/ftime.txt", inputMessage3.c_str());
+        ftime=readFile(SPIFFS, "/ftime.txt").toInt();
+        Serial.print("ftime UPDATED = ");
+        Serial.println(ftime);
+        timerwifiswitch.restart();
+      }
+      if (currentpos == 125) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/cashoo.txt", inputMessage3.c_str());
+        cashoo=readFile(SPIFFS, "/cashoo.txt").toInt();
+        Serial.print("cashoo UPDATED = ");
+        Serial.println(cashoo);
+        timerwifiswitch.restart();
+      }
+      if (currentpos == 126) {
+        delay(50);
+        inputMessage3 = cmd;
+        writeFile(SPIFFS, "/creditoo.txt", inputMessage3.c_str());
+        creditoo=readFile(SPIFFS, "/creditoo.txt").toInt();
+        Serial.print("creditoo UPDATED = ");
+        Serial.println(creditoo);
+        timerwifiswitch.restart();
+      }
+   
+      if (currentpos == 116) {  // SHOW SOFTWARE VERSION
+        //channel_setting = true;
+        delay(50);
+        foo = 1;  //temporary FLASHER OFF
+        RF_channel_updated = false; //stop channel switching
+        //value  = recievedata_RF_channel; //READ SOFT MASTER CHANNEL and display
+        Serial.print("got 116 SHOW VERSION = ");
+        Serial.println(SOFTWARE_VERSION);
+        //mas_rec_ch_num = value;
+        for(int i=0; i<36; i=i+3)
+        {
+          digitval[i+2] = SOFTWARE_VERSION; //VERSION
+          digitval[i+1] = 17; // - 
+          digitval[i] = 15; // U
+        }
+        updateShiftRegister();
+      }
+      if (currentpos == 117) {  // READ RF CHANNEL
+        channel_setting = true;
+        delay(50);
+        foo = 1;  //temporary FLASHER OFF
+        RF_channel_updated = false; //stop channel switching
+        value  = recievedata_RF_channel; //READ SOFT MASTER CHANNEL and display
+        //Serial.print("got 117 MASTER RF CHANNEL READ = ");
+        Serial.println(value);
+        RF_channel_scan = true;
+        mas_rec_ch_num = recievedata_RF_channel;
+        mas_send_sec_rec_ch_num = mas_send_channel;
+        for (int i = 0; i < 48; i = i + 3)
+        {
+          digitval[i + 2] = mas_rec_ch_num_1 % 10;
+          mas_rec_ch_num_1 /= 10;
+          digitval[i + 1] = mas_rec_ch_num_1 % 10;
+          mas_rec_ch_num_1 /= 10;
+          if (transAddress == 3) {
+            digitval[i] = 13;
+          }
+          else
+          {
+            digitval[i] = 12;
+          }
+          mas_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+        }
+        updateShiftRegister();
+
+      }
+      if (currentpos == 118) {  // REMOTE AND MASTER RF CHANNEL CHANGE
+        channel_setting = true;
+        delay(50);
+        foo = 1;  //temporary FLASHER OFF
+        //EEPROM.write(currentpos, value);
+        Serial.println("got 118 MASTER RF CHANNEL SELECTION");
+        Serial.println(currentpos);
+        Serial.println(value);
+        mas_rec_ch_num = value;
+        RF_channel_updated = true;
+        for(int i=0; i<36; i=i+3)
+        {
+          digitval[i+2] = mas_rec_ch_num_1%10;
+          mas_rec_ch_num_1/=10;
+          digitval[i+1] = mas_rec_ch_num_1%10;
+          mas_rec_ch_num_1/=10;
+          digitval[i] = mas_rec_ch_num_1%10;
+          mas_rec_ch_num_1 = mas_rec_ch_num; // set all grades rf channel to display
+        }
+        updateShiftRegister();
+        if(cmd == 1)  // to save the current blinking master channel
+        {
+          channel_save = true;
+          EEPROM.put(currentpos, value);
+          EEPROM.commit();
+          Serial.println("MASTER REC RF CHANNEL saved = ");
+          Serial.println(value);
+          
+          EEPROM.put(119, value+2);
+          EEPROM.commit();
+          Serial.println("MASTER SEND SECONDARY RECIEVE RF CHANNEL saved = ");
+          Serial.println(value+2);
+        }
+           
+      }
+      if (currentpos == 119) {  // MASTER SEND AND SECONDARY RECIEVE RF CHANNEL CHANGE
+        
+        channel_setting = true;
+        delay(50);
+        mas_rec_ch_num = recievedata_RF_channel;
+        //EEPROM.write(currentpos, value);
+        Serial.println("got 119 SECONDARY RF CHANNEL SELECTION");
+        Serial.println(currentpos);
+        Serial.println(value);
+        mas_send_sec_rec_ch_num = value;
+        mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num;
+        RF_channel_updated = true;
+        for(int i=0; i<36; i=i+3)
+        { 
+          digitval[i+2] = mas_send_sec_rec_ch_num_1%10;
+          mas_send_sec_rec_ch_num_1/=10;
+          digitval[i+1] = mas_send_sec_rec_ch_num_1%10;
+          mas_send_sec_rec_ch_num_1/=10;
+          digitval[i] = mas_send_sec_rec_ch_num_1%10;
+          mas_send_sec_rec_ch_num_1 = mas_send_sec_rec_ch_num; // set all grades rf channel to display
+        }
+        updateShiftRegister();
+        if(cmd == 1)  // to save the current blinking secondary channel
+        {
+          channel_save = true;
+          EEPROM.put(currentpos, value);
+          EEPROM.commit();
+          Serial.println("MASTER SEND SECONDARY RECIEVE RF CHANNEL saved = ");
+          Serial.println(value);
+        }
+      }
+    }
+    }
+        
+        }
+
+        
+    }
+/*
+    } else {
+            Serial.println("CRC verification failed.");
+            Serial2.flush();
+        }
+  }
+   else {
+        Serial.println("Password verification failed.");
+        Serial2.flush();
+    }
+*/
+//}
+    
+  //}
+}
